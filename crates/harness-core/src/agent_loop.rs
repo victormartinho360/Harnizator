@@ -79,7 +79,7 @@ impl<'a> AgentLoop<'a> {
     pub async fn run_with_sink(
         &self,
         req: ChatRequest,
-        sink: &mut dyn FnMut(&Event),
+        sink: &mut (dyn FnMut(&Event) + Send),
     ) -> Result<LoopRun, LoopError> {
         let mut messages = req.messages.clone();
         let mut events: Vec<Event> = Vec::new();

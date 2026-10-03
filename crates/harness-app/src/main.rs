@@ -5,10 +5,12 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use harness_core::provider_port::{ChatRequest, LlmProvider};
+use harness_core::tool_port::ToolPort;
 use harness_core::{Message, ModelAlias};
 use harness_providers::{MockProvider, ProviderConfig, ProviderRouter, Vault};
 use harness_tools::{FlagPolicy, SandboxMode, ToolCtx, Toolbelt};
@@ -92,10 +94,11 @@ async fn dispatch(
         system: None,
         tools: vec![],
     };
-    let mut out = std::io::stdout().lock();
+    // StdoutLock/StderrLock não são Send: bufferizamos e imprimimos ao final.
+    let mut out: Vec<u8> = Vec::new();
+    let mut err: Vec<u8> = Vec::new();
     match tools {
         Some(belt) => {
-            let mut err = std::io::stderr().lock();
             let summary = harness_cli::run_agent_headless(
                 provider,
                 &belt,
@@ -105,12 +108,17 @@ async fn dispatch(
                 &mut err,
             )
             .await?;
+            use std::io::Write;
+            std::io::stdout().write_all(&out)?;
+            std::io::stderr().write_all(&err)?;
             if let Some(u) = summary.usage {
                 eprintln!("[usage] input={} output={}", u.input, u.output);
             }
         }
         None => {
             let summary = harness_cli::run_headless(provider, req, &mut out).await?;
+            use std::io::Write;
+            std::io::stdout().write_all(&out)?;
             if let Some(u) = summary.usage {
                 eprintln!("[usage] input={} output={}", u.input, u.output);
             }
@@ -121,7 +129,10 @@ async fn dispatch(
 
 async fn real_main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let prompt = cli.prompt.context("missing prompt (TUI chega na Wave 3)")?;
+    let Some(prompt) = cli.prompt.clone() else {
+        return run_tui(&cli).await;
+    };
+    let prompt = prompt.as_str();
 
     let tools_of = |config: Option<&ProviderConfig>| -> anyhow::Result<Option<Toolbelt>> {
         if !cli.tools {
@@ -136,13 +147,7 @@ async fn real_main() -> anyhow::Result<()> {
     if let Some(scenario) = cli.mock {
         let provider =
             MockProvider::from_scenario_file(&scenario).context("failed to load scenario")?;
-        dispatch(
-            &provider,
-            "mock/test-model".into(),
-            &prompt,
-            tools_of(None)?,
-        )
-        .await?;
+        dispatch(&provider, "mock/test-model".into(), prompt, tools_of(None)?).await?;
         return Ok(());
     }
 
@@ -159,10 +164,46 @@ async fn real_main() -> anyhow::Result<()> {
     dispatch(
         resolved.provider.as_ref(),
         resolved.model,
-        &prompt,
+        prompt,
         tools_of(Some(&config))?,
     )
     .await?;
+    Ok(())
+}
+
+/// Modo TUI (default quando não há prompt posicional).
+async fn run_tui(cli: &Cli) -> anyhow::Result<()> {
+    let (provider, model): (Arc<dyn LlmProvider>, String) = if let Some(scenario) = &cli.mock {
+        (
+            Arc::new(MockProvider::from_scenario_file(scenario)?),
+            "mock/test-model".to_string(),
+        )
+    } else {
+        let alias_raw = cli
+            .model
+            .clone()
+            .context("TUI mode needs --model (or --mock)")?;
+        let alias = ModelAlias::parse(&alias_raw)?;
+        let config_path = dirs_config().join("config.toml");
+        let config_src = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("cannot read {}", config_path.display()))?;
+        let config: ProviderConfig = toml::from_str(&config_src)?;
+        let vault = Vault::open(&dirs_config().join("vault.age"))?;
+        let router = ProviderRouter::new(&config, &vault)?;
+        let resolved = router.resolve(&alias)?;
+        (resolved.provider, resolved.model)
+    };
+
+    let tools: Option<Arc<dyn ToolPort>> = if cli.tools {
+        let cwd = std::env::current_dir()?;
+        let belt = Toolbelt::new(ToolCtx::new(&cwd)?, sandbox_mode(cli.sandbox, None))
+            .map_err(|e| anyhow::anyhow!(e))?;
+        Some(Arc::new(belt))
+    } else {
+        None
+    };
+
+    harness_tui::runtime::run(provider, tools, model, format!("{:?}", cli.sandbox)).await?;
     Ok(())
 }
 

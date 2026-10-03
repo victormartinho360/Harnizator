@@ -33,7 +33,7 @@ pub struct HeadlessSummary {
 pub async fn run_headless(
     provider: &dyn LlmProvider,
     req: ChatRequest,
-    out: &mut dyn Write,
+    out: &mut (dyn Write + Send),
 ) -> Result<HeadlessSummary, CliError> {
     let mut stream = provider.stream(req).await?;
     let mut summary = HeadlessSummary::default();
@@ -73,8 +73,8 @@ pub async fn run_agent_headless(
     tools: &dyn ToolPort,
     approver: &dyn ApprovalPort,
     req: ChatRequest,
-    out: &mut dyn Write,
-    err: &mut dyn Write,
+    out: &mut (dyn Write + Send),
+    err: &mut (dyn Write + Send),
 ) -> Result<HeadlessSummary, CliError> {
     let mut audit = |event: &Event| match event {
         Event::ToolCallRequested { name, .. } => {
