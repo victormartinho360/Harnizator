@@ -20,3 +20,7 @@ jobs:
           tool: cargo-nextest,just
       - uses: Swatinem/rust-cache@v2
       - run: just ci
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit --deny warnings || echo "::warning::cargo audit advisories found" 

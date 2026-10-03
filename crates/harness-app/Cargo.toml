@@ -1,4 +1,5 @@
 [package]
+version.workspace = true
 name = "harness-app"
 edition.workspace = true
 rust-version.workspace = true
@@ -27,3 +28,4 @@ anyhow = "1"
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+rexpect = "0.5"

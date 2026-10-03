@@ -1,4 +1,5 @@
 [package]
+version.workspace = true
 name = "harness-tui"
 edition.workspace = true
 rust-version.workspace = true

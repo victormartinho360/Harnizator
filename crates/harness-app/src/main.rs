@@ -60,6 +60,10 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = SandboxFlag::OnlyFlagged)]
     sandbox: SandboxFlag,
 
+    /// Não persiste sessão no SQLite local.
+    #[arg(long)]
+    no_store: bool,
+
     /// Mensagem do usuário (modo headless de um turno).
     prompt: Option<String>,
 }
@@ -248,7 +252,11 @@ async fn run_tui(cli: &Cli) -> anyhow::Result<()> {
         None
     };
 
-    let store: Option<Arc<dyn SessionStore>> = open_store().ok().map(|s| Arc::new(s) as _);
+    let store: Option<Arc<dyn SessionStore>> = if cli.no_store {
+        None
+    } else {
+        open_store().ok().map(|s| Arc::new(s) as _)
+    };
     let admin: Option<Arc<dyn harness_core::provider_admin::ProviderAdmin>> = {
         let vault = Vault::open(&dirs_config().join("vault.age")).ok();
         Some(Arc::new(harness_providers::ProviderAdminService::new(

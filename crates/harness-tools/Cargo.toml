@@ -1,4 +1,5 @@
 [package]
+version.workspace = true
 name = "harness-tools"
 edition.workspace = true
 rust-version.workspace = true
