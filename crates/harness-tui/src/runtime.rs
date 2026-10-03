@@ -1,7 +1,8 @@
-//! Runtime do TUI: loop de eventos crossterm + tasks de agente (spec/05).
+//! Runtime do TUI: loop de eventos crossterm + tasks de agentes (spec/05, 06).
 //!
 //! Toda funcionalidade de negócio vive no core; aqui há apenas wiring de IO.
 
+use std::collections::HashMap;
 use std::io::stdout;
 use std::sync::{Arc, Mutex};
 
@@ -11,15 +12,19 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use futures::StreamExt;
+use futures::channel::mpsc as fmpsc;
+use futures::future::{AbortHandle, Abortable};
 use harness_core::agent_loop::AgentLoop;
+use harness_core::agents::AgentManager;
 use harness_core::events::Event as CoreEvent;
 use harness_core::provider_port::{ChatRequest, LlmProvider};
-use harness_core::tool_port::{ApprovalDecision, ApprovalPort, ToolCall, ToolPort};
-use harness_core::{Message, Role};
+use harness_core::service::{ServiceCtx, run_agent_service};
+use harness_core::subagent_tool::SpawnToolPort;
+use harness_core::tool_port::{ApprovalDecision, ApprovalPort, ToolCall, ToolDecision, ToolPort};
+use harness_core::{AgentId, ContentBlock, Message, Role};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
 
 use crate::state::{Action, AppState};
 use crate::ui_msg::UiMsg;
@@ -35,14 +40,14 @@ struct NoTools;
 
 #[async_trait::async_trait]
 impl ToolPort for NoTools {
-    fn decide(&self, _call: &ToolCall) -> harness_core::tool_port::ToolDecision {
-        harness_core::tool_port::ToolDecision::Deny {
+    fn decide(&self, _call: &ToolCall) -> ToolDecision {
+        ToolDecision::Deny {
             reason: "no tools enabled".into(),
         }
     }
     async fn execute(&self, call: &ToolCall) -> harness_core::tool_port::ToolOutcome {
         harness_core::tool_port::ToolOutcome {
-            content: format!("error: no tools enabled ({} )", call.name),
+            content: format!("error: no tools enabled ({})", call.name),
             is_error: true,
         }
     }
@@ -109,13 +114,110 @@ pub async fn run(
     let reply_slot: Arc<Mutex<Option<oneshot::Sender<ApprovalDecision>>>> =
         Arc::new(Mutex::new(None));
 
-    let tools: Arc<dyn ToolPort> = tools.unwrap_or_else(|| Arc::new(NoTools));
-    let model_name = model.clone();
+    let manager = Arc::new(Mutex::new(AgentManager::new(8, 4)));
+    let root_id = {
+        let m = manager.lock().unwrap_or_else(|p| p.into_inner());
+        m.root_id()
+    };
+
+    // tools do root ganham spawn_agent via wrapper (spec/06)
+    let base_tools: Arc<dyn ToolPort> = tools.unwrap_or_else(|| Arc::new(NoTools));
+    let root_tools: Arc<dyn ToolPort> = Arc::new(SpawnToolPort::new(
+        base_tools.clone(),
+        manager.clone(),
+        root_id.clone(),
+    ));
+
     let mut history: Vec<Message> = Vec::new();
-    let mut task: Option<JoinHandle<()>> = None;
+    let mut root_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut agent_tasks: HashMap<AgentId, AbortHandle> = HashMap::new();
+    let mut agent_inboxes: HashMap<AgentId, fmpsc::UnboundedSender<String>> = HashMap::new();
     let mut keys = EventStream::new();
+    let mut graph_dirty = true;
 
     loop {
+        // sincroniza grafo e promove agentes enfileirados
+        if graph_dirty {
+            let snapshot = {
+                let m = manager.lock().unwrap_or_else(|p| p.into_inner());
+                m.snapshot()
+            };
+            state.apply_ui_msg(UiMsg::GraphSync(snapshot));
+            graph_dirty = false;
+        }
+        let startable = {
+            let mut m = manager.lock().unwrap_or_else(|p| p.into_inner());
+            m.drain_startable()
+        };
+        for agent_id in startable {
+            if agent_id == root_id {
+                continue; // root roda via chat
+            }
+            let prompt = {
+                let m = manager.lock().unwrap_or_else(|p| p.into_inner());
+                m.prompt_of(&agent_id).unwrap_or_default()
+            };
+            let (inbox_tx, mut inbox_rx) = fmpsc::unbounded::<String>();
+            agent_inboxes.insert(agent_id.clone(), inbox_tx);
+
+            let tx2 = tx.clone();
+            let slot2 = reply_slot.clone();
+            let provider2 = provider.clone();
+            let manager2 = manager.clone();
+            let base2 = base_tools.clone();
+            let model2 = model.clone();
+            let agent2 = agent_id.clone();
+
+            let (abort, abort_reg) = AbortHandle::new_pair();
+            agent_tasks.insert(agent_id.clone(), abort);
+
+            tokio::spawn(Abortable::new(
+                async move {
+                    let sub_tools: Arc<dyn ToolPort> =
+                        Arc::new(SpawnToolPort::new(base2, manager2.clone(), agent2.clone()));
+                    let sink_tx = tx2.clone();
+                    let mut sink = move |ev: &CoreEvent| {
+                        let _ = sink_tx.send(UiMsg::Core(ev.clone()));
+                    };
+                    let approval = TuiApproval {
+                        tx: tx2.clone(),
+                        reply_slot: slot2,
+                    };
+                    let history = vec![Message {
+                        role: Role::User,
+                        content: vec![ContentBlock::Text { text: prompt }],
+                    }];
+                    let tx_done = tx2.clone();
+                    let id_done = agent2.clone();
+                    let result = run_agent_service(
+                        ServiceCtx {
+                            provider: provider2.as_ref(),
+                            tools: sub_tools.as_ref(),
+                            approver: &approval,
+                            manager: manager2,
+                            agent: agent2,
+                            model: model2,
+                        },
+                        history,
+                        &mut inbox_rx,
+                        &mut sink,
+                    )
+                    .await;
+                    if let Err(e) = result {
+                        let _ = tx_done.send(UiMsg::Core(CoreEvent::Error {
+                            message: format!("agent {id_done}: {e}"),
+                        }));
+                    }
+                },
+                abort_reg,
+            ));
+            let _ = tx.send(UiMsg::Core(CoreEvent::AgentSpawned {
+                agent: agent_id.clone(),
+                parent: None,
+                label: String::new(),
+            }));
+        }
+
         terminal.draw(|f| crate::ui::draw(f, &state))?;
 
         tokio::select! {
@@ -125,13 +227,10 @@ pub async fn run(
                         history = messages;
                         state.apply_ui_msg(UiMsg::SyncHistory(Vec::new(), usage));
                     }
-                    Some(UiMsg::TurnFinished(Ok(()))) => {
-                        state.apply_ui_msg(UiMsg::TurnFinished(Ok(())));
-                    }
-                    Some(msg @ UiMsg::TurnFinished(Err(_))) => state.apply_ui_msg(msg),
                     Some(msg) => state.apply_ui_msg(msg),
                     None => {}
                 }
+                graph_dirty = true;
             }
             maybe_key = keys.next() => {
                 let Some(Ok(CrosstermEvent::Key(key))) = maybe_key else { continue };
@@ -140,7 +239,7 @@ pub async fn run(
                     Action::None => {}
                     Action::Quit => break,
                     Action::Cancel => {
-                        if let Some(h) = task.take() {
+                        if let Some(h) = root_task.take() {
                             h.abort();
                         }
                         state.apply_ui_msg(UiMsg::TurnFinished(Ok(())));
@@ -149,7 +248,7 @@ pub async fn run(
                         let sender = {
                             let mut slot = match reply_slot.lock() {
                                 Ok(s) => s,
-                                Err(poisoned) => poisoned.into_inner(),
+                                Err(p) => p.into_inner(),
                             };
                             slot.take()
                         };
@@ -158,24 +257,52 @@ pub async fn run(
                         }
                         state.apply_ui_msg(UiMsg::ApprovalResolved);
                     }
+                    Action::Interrupt(id) => {
+                        if let Some(t) = agent_tasks.remove(&id) {
+                            t.abort();
+                        }
+                        agent_inboxes.remove(&id);
+                        if let Ok(mut m) = manager.lock() {
+                            m.interrupt(&id);
+                        }
+                        let _ = tx.send(UiMsg::Core(CoreEvent::AgentInterrupted {
+                            agent: id,
+                        }));
+                        graph_dirty = true;
+                    }
+                    Action::SendToAgent(id, text) | Action::InjectContext(id, text) => {
+                        if let Some(inbox) = agent_inboxes.get(&id) {
+                            let _ = inbox.unbounded_send(text);
+                            if let Ok(mut m) = manager.lock() {
+                                m.set_running(&id);
+                            }
+                            graph_dirty = true;
+                        }
+                    }
                     Action::Send(text) => {
                         state.push_user_message(text.clone());
-                        history.push(Message { role: Role::User, content: vec![harness_core::ContentBlock::Text { text }] });
+                        history.push(Message {
+                            role: Role::User,
+                            content: vec![ContentBlock::Text { text }],
+                        });
 
                         let tx2 = tx.clone();
                         let slot2 = reply_slot.clone();
-                        let model_name = model_name.clone();
                         let provider2 = provider.clone();
-                        let tools2 = tools.clone();
+                        let tools2 = root_tools.clone();
                         let history_now = history.clone();
-                        task = Some(tokio::spawn(async move {
+                        let model_name = model.clone();
+                        root_task = Some(tokio::spawn(async move {
                             let sink_tx = tx2.clone();
                             let mut sink = move |ev: &CoreEvent| {
                                 let _ = sink_tx.send(UiMsg::Core(ev.clone()));
                             };
-                            let approval = TuiApproval { tx: tx2.clone(), reply_slot: slot2 };
+                            let approval = TuiApproval {
+                                tx: tx2.clone(),
+                                reply_slot: slot2,
+                            };
                             let req = ChatRequest {
-                                model: model_name.clone(),
+                                model: model_name,
                                 messages: history_now,
                                 max_tokens: 4096,
                                 system: None,
@@ -184,7 +311,10 @@ pub async fn run(
                             let looper = AgentLoop::new(provider2.as_ref(), tools2.as_ref(), &approval);
                             match looper.run_with_sink(req, &mut sink).await {
                                 Ok(run) => {
-                                    let _ = tx2.send(UiMsg::SyncHistory(run.messages, run.outcome.usage));
+                                    let _ = tx2.send(UiMsg::SyncHistory(
+                                        run.messages,
+                                        run.outcome.usage,
+                                    ));
                                     let _ = tx2.send(UiMsg::TurnFinished(Ok(())));
                                 }
                                 Err(e) => {

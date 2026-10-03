@@ -6,8 +6,11 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
+use harness_core::agents::AgentStatus;
+
+use crate::graph::{GraphLayout, NODE_H, NODE_W};
 use crate::markdown::render_markdown;
-use crate::state::{AppState, DisplayRole};
+use crate::state::{AppState, DisplayRole, InputMode, Screen};
 
 /// Desenha o frame inteiro.
 pub fn draw(f: &mut Frame, state: &AppState) {
@@ -25,11 +28,184 @@ pub fn draw(f: &mut Frame, state: &AppState) {
         .split(area);
 
     draw_status_bar(f, chunks[0], state);
-    draw_chat(f, chunks[1], state);
-    draw_input(f, chunks[2], state);
+    match state.screen {
+        Screen::Chat | Screen::Help => {
+            draw_chat(f, chunks[1], state);
+            draw_input(f, chunks[2], state);
+        }
+        Screen::Graph => {
+            draw_graph(f, chunks[1], state);
+            draw_input(f, chunks[2], state);
+        }
+    }
+    if state.screen == Screen::Help {
+        draw_help(f, area);
+    }
     if let Some(pending) = &state.awaiting_approval {
         draw_approval_modal(f, area, pending);
     }
+}
+
+fn draw_graph(f: &mut Frame, area: Rect, state: &AppState) {
+    use ratatui::text::Line;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" agentes (setas/hjkl navega · Enter chat · m msg · i injeta · x interrompe) ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let layout = GraphLayout::compute(&state.graph_nodes, inner.width, inner.height);
+    let mut buf: Vec<Vec<(char, Style)>> =
+        vec![vec![(' ', Style::default()); inner.width as usize]; inner.height as usize];
+
+    // arestas primeiro (ficam atrás dos nós)
+    for n in &state.graph_nodes {
+        let (Some(parent_id), Some(child)) = (n.parent.as_ref(), layout.position(&n.id)) else {
+            continue;
+        };
+        let Some(pp) = layout.position(parent_id) else {
+            continue;
+        };
+        let cx = pp.x + NODE_W / 2;
+        for y in pp.y + NODE_H..child.y {
+            plot(
+                &mut buf,
+                inner,
+                (cx, y),
+                '│',
+                Style::default().fg(Color::DarkGray),
+                state,
+            );
+        }
+    }
+
+    // nós
+    for (i, n) in state.graph_nodes.iter().enumerate() {
+        let Some(pos) = layout.position(&n.id) else {
+            continue;
+        };
+        let (dot, style) = match n.status {
+            AgentStatus::Running => ("●", Style::default().fg(Color::Green)),
+            AgentStatus::Queued => ("○", Style::default().fg(Color::DarkGray)),
+            AgentStatus::Idle => ("◆", Style::default().fg(Color::Cyan)),
+            AgentStatus::Done => ("✓", Style::default().fg(Color::Blue)),
+            AgentStatus::Failed => ("✗", Style::default().fg(Color::Red)),
+            AgentStatus::Interrupted => ("■", Style::default().fg(Color::Yellow)),
+        };
+        let style = if i == state.graph_selected {
+            style.add_modifier(Modifier::REVERSED)
+        } else {
+            style
+        };
+        let label: String = n.label.chars().take(NODE_W as usize - 4).collect();
+        let text = format!("{} {}", dot, label);
+        for (dx, ch) in text.chars().enumerate() {
+            plot(
+                &mut buf,
+                inner,
+                (pos.x + 1 + dx as u16, pos.y + 1),
+                ch,
+                style,
+                state,
+            );
+        }
+        plot(&mut buf, inner, (pos.x, pos.y), '┌', style, state);
+        plot(
+            &mut buf,
+            inner,
+            (pos.x + NODE_W - 1, pos.y),
+            '┐',
+            style,
+            state,
+        );
+        plot(
+            &mut buf,
+            inner,
+            (pos.x, pos.y + NODE_H - 1),
+            '└',
+            style,
+            state,
+        );
+        plot(
+            &mut buf,
+            inner,
+            (pos.x + NODE_W - 1, pos.y + NODE_H - 1),
+            '┘',
+            style,
+            state,
+        );
+        for dx in 1..NODE_W - 1 {
+            plot(&mut buf, inner, (pos.x + dx, pos.y), '─', style, state);
+            plot(
+                &mut buf,
+                inner,
+                (pos.x + dx, pos.y + NODE_H - 1),
+                '─',
+                style,
+                state,
+            );
+        }
+        plot(&mut buf, inner, (pos.x, pos.y + 1), '│', style, state);
+        plot(
+            &mut buf,
+            inner,
+            (pos.x + NODE_W - 1, pos.y + 1),
+            '│',
+            style,
+            state,
+        );
+    }
+
+    let lines: Vec<Line> = buf
+        .into_iter()
+        .map(|row| {
+            Line::from(
+                row.into_iter()
+                    .map(|(ch, st)| Span::styled(ch.to_string(), st))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn plot(
+    buf: &mut [Vec<(char, Style)>],
+    area: Rect,
+    (x, y): (u16, u16),
+    ch: char,
+    style: Style,
+    state: &AppState,
+) {
+    let (px, py) = state.graph_offset;
+    let (x, y) = (x as i32 - px as i32, y as i32 - py as i32);
+    if x < 0 || y < 0 || x >= area.width as i32 || y >= area.height as i32 {
+        return;
+    }
+    buf[y as usize][x as usize] = (ch, style);
+}
+
+fn draw_help(f: &mut Frame, area: Rect) {
+    let rect = Rect::new(
+        area.x + area.width / 6,
+        area.y + area.height / 6,
+        area.width * 2 / 3,
+        area.height * 2 / 3,
+    );
+    f.render_widget(Clear, rect);
+    let text = vec![
+        Line::from("Ctrl+1 chat · Ctrl+2 grafo de agentes · Ctrl+3 ajuda"),
+        Line::from("Enter envia · Esc cancela geração (ou sai do modo msg/i)"),
+        Line::from("grafo: setas/hjkl navegam · m mensagem · i injeção · x interrompe"),
+        Line::from("aprovação: y aprova · a aprova+allowlist · n nega"),
+    ];
+    f.render_widget(
+        Paragraph::new(text).block(Block::default().borders(Borders::ALL).title(" ajuda ")),
+        rect,
+    );
 }
 
 fn draw_status_bar(f: &mut Frame, area: Rect, state: &AppState) {
@@ -98,10 +274,11 @@ fn draw_chat(f: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_input(f: &mut Frame, area: Rect, state: &AppState) {
-    let title = if state.generating {
-        "input (gerando…)"
-    } else {
-        "input"
+    let title = match &state.input_mode {
+        InputMode::Chat if state.generating => "input (gerando…)".to_string(),
+        InputMode::Chat => "input".to_string(),
+        InputMode::Message(id) => format!("mensagem → {id}"),
+        InputMode::Inject(id) => format!("inject contexto → {id}"),
     };
     let border_style = if state.generating {
         Style::default().fg(Color::DarkGray)

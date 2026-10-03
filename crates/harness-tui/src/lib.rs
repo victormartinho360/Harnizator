@@ -2,6 +2,7 @@
 //!
 //! Consome apenas ports do `harness-core` — nenhum adapter de infra.
 
+pub mod graph;
 pub mod markdown;
 pub mod runtime;
 pub mod state;

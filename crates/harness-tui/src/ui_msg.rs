@@ -18,4 +18,6 @@ pub enum UiMsg {
     TurnFinished(Result<(), String>),
     /// Histórico atualizado pelo agent loop (tool_use/tool_result incluídos).
     SyncHistory(Vec<harness_core::Message>, harness_core::TokenUsage),
+    /// Snapshot do grafo de agentes para a tela Graph.
+    GraphSync(Vec<harness_core::agents::NodeView>),
 }

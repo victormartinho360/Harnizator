@@ -123,6 +123,12 @@ impl<'a> AgentLoop<'a> {
             }
 
             if tool_calls.is_empty() {
+                if !text.is_empty() {
+                    messages.push(Message {
+                        role: crate::Role::Assistant,
+                        content: vec![ContentBlock::Text { text: text.clone() }],
+                    });
+                }
                 outcome.text = text;
                 return Ok(LoopRun {
                     outcome,

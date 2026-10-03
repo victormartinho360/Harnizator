@@ -4,10 +4,13 @@
 //! e a máquina de estados do agent loop (Wave 2+).
 
 pub mod agent_loop;
+pub mod agents;
 pub mod events;
 pub mod message;
 pub mod model_alias;
 pub mod provider_port;
+pub mod service;
+pub mod subagent_tool;
 pub mod tool_port;
 
 pub use events::Event;

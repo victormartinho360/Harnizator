@@ -5,7 +5,26 @@ use harness_core::TokenUsage;
 use harness_core::events::Event;
 use harness_core::tool_port::{ApprovalDecision, ToolCall};
 
+use harness_core::AgentId;
+use harness_core::agents::NodeView;
+
 use crate::ui_msg::UiMsg;
+
+/// Tela ativa (roteador do shell).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Screen {
+    Chat,
+    Graph,
+    Help,
+}
+
+/// Qual entidade o input está mirando.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputMode {
+    Chat,
+    Message(AgentId),
+    Inject(AgentId),
+}
 
 /// Papel visual da mensagem no chat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +55,12 @@ pub struct PendingApproval {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     None,
+    /// Interrompe o agente (e subárvore).
+    Interrupt(AgentId),
+    /// Envia mensagem para a inbox do agente.
+    SendToAgent(AgentId, String),
+    /// Injeta contexto no próximo turno do agente.
+    InjectContext(AgentId, String),
     /// Envia o texto como mensagem do usuário.
     Send(String),
     /// Resolve a aprovação pendente com a decisão dada.
@@ -57,6 +82,11 @@ pub struct AppState {
     pub model: String,
     pub sandbox: String,
     pub usage: TokenUsage,
+    pub screen: Screen,
+    pub graph_nodes: Vec<NodeView>,
+    pub graph_selected: usize,
+    pub graph_offset: (u16, u16),
+    pub input_mode: InputMode,
 }
 
 impl AppState {
@@ -75,6 +105,11 @@ impl AppState {
             model: model.to_string(),
             sandbox: sandbox.to_string(),
             usage: TokenUsage::default(),
+            screen: Screen::Chat,
+            graph_nodes: Vec::new(),
+            graph_selected: 0,
+            graph_offset: (0, 0),
+            input_mode: InputMode::Chat,
         }
     }
 
@@ -156,6 +191,12 @@ impl AppState {
             UiMsg::ApprovalResolved => {
                 self.awaiting_approval = None;
             }
+            UiMsg::GraphSync(nodes) => {
+                if !nodes.is_empty() && self.graph_selected >= nodes.len() {
+                    self.graph_selected = nodes.len() - 1;
+                }
+                self.graph_nodes = nodes;
+            }
             UiMsg::SyncHistory(_messages, usage) => {
                 self.usage = usage;
             }
@@ -190,18 +231,54 @@ impl AppState {
                 _ => Action::None,
             };
         }
+        // roteamento global de telas
+        match (key.code, key.modifiers) {
+            (KeyCode::Char('1'), KeyModifiers::CONTROL) => {
+                self.screen = Screen::Chat;
+                return Action::None;
+            }
+            (KeyCode::Char('2'), KeyModifiers::CONTROL) => {
+                self.screen = Screen::Graph;
+                return Action::None;
+            }
+            (KeyCode::Char('3'), KeyModifiers::CONTROL) => {
+                self.screen = Screen::Help;
+                return Action::None;
+            }
+            _ => {}
+        }
+        if self.screen == Screen::Graph {
+            return self.handle_graph_key(key);
+        }
         match (key.code, key.modifiers) {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => Action::Quit,
             (KeyCode::Enter, _) => {
-                if self.input.is_empty() || self.generating {
-                    Action::None
-                } else {
-                    let text = std::mem::take(&mut self.input);
-                    Action::Send(text)
+                if self.input.is_empty() {
+                    return Action::None;
+                }
+                match &self.input_mode {
+                    InputMode::Chat if self.generating => Action::None,
+                    InputMode::Chat => Action::Send(std::mem::take(&mut self.input)),
+                    InputMode::Message(id) => {
+                        let id = id.clone();
+                        let text = std::mem::take(&mut self.input);
+                        self.input_mode = InputMode::Chat;
+                        Action::SendToAgent(id, text)
+                    }
+                    InputMode::Inject(id) => {
+                        let id = id.clone();
+                        let text = std::mem::take(&mut self.input);
+                        self.input_mode = InputMode::Chat;
+                        Action::InjectContext(id, text)
+                    }
                 }
             }
             (KeyCode::Esc, _) => {
-                if self.generating {
+                if self.input_mode != InputMode::Chat {
+                    self.input_mode = InputMode::Chat;
+                    self.input.clear();
+                    Action::None
+                } else if self.generating {
                     Action::Cancel
                 } else {
                     Action::None
@@ -228,6 +305,68 @@ impl AppState {
             }
             (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 self.input.push(c);
+                Action::None
+            }
+            _ => Action::None,
+        }
+    }
+
+    fn selected_agent(&self) -> Option<&AgentId> {
+        self.graph_nodes.get(self.graph_selected).map(|n| &n.id)
+    }
+
+    fn handle_graph_key(&mut self, key: KeyEvent) -> Action {
+        let n = self.graph_nodes.len();
+        match (key.code, key.modifiers) {
+            (KeyCode::Enter, _) => {
+                self.screen = Screen::Chat;
+                Action::None
+            }
+            (KeyCode::Down, _)
+            | (KeyCode::Char('j'), _)
+            | (KeyCode::Right, _)
+            | (KeyCode::Char('l'), _) => {
+                if n > 0 {
+                    self.graph_selected = (self.graph_selected + 1) % n;
+                }
+                Action::None
+            }
+            (KeyCode::Up, _)
+            | (KeyCode::Char('k'), _)
+            | (KeyCode::Left, _)
+            | (KeyCode::Char('h'), _) => {
+                if n > 0 {
+                    self.graph_selected = (self.graph_selected + n - 1) % n;
+                }
+                Action::None
+            }
+            (KeyCode::Char('x'), _) => self
+                .selected_agent()
+                .map(|id| Action::Interrupt(id.clone()))
+                .unwrap_or(Action::None),
+            (KeyCode::Char('m'), _) => match self.selected_agent() {
+                Some(id) => {
+                    self.input_mode = InputMode::Message(id.clone());
+                    self.screen = Screen::Chat;
+                    Action::None
+                }
+                None => Action::None,
+            },
+            (KeyCode::Char('i'), _) => match self.selected_agent() {
+                Some(id) => {
+                    self.input_mode = InputMode::Inject(id.clone());
+                    self.screen = Screen::Chat;
+                    Action::None
+                }
+                None => Action::None,
+            },
+            (KeyCode::Char('r'), _) => Action::None, // retry: runtime trata em wave futura
+            (KeyCode::PageUp, _) => {
+                self.graph_offset.1 = self.graph_offset.1.saturating_add(3);
+                Action::None
+            }
+            (KeyCode::PageDown, _) => {
+                self.graph_offset.1 = self.graph_offset.1.saturating_sub(3);
                 Action::None
             }
             _ => Action::None,
