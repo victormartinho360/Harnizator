@@ -17,6 +17,7 @@ harness-providers = { path = "../harness-providers" }
 harness-cli = { path = "../harness-cli" }
 harness-tools = { path = "../harness-tools" }
 harness-tui = { path = "../harness-tui" }
+harness-store = { path = "../harness-store" }
 clap = { version = "4", features = ["derive"] }
 tokio.workspace = true
 toml.workspace = true

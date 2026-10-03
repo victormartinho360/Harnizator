@@ -74,6 +74,7 @@ fn tool_events_append_audit_lines() {
             agent: AgentId::new("root"),
             id: "c1".into(),
             is_error: false,
+            output: "done".into(),
         },
     ] {
         s.apply_event(&ev);

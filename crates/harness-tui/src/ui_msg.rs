@@ -20,4 +20,6 @@ pub enum UiMsg {
     SyncHistory(Vec<harness_core::Message>, harness_core::TokenUsage),
     /// Snapshot do grafo de agentes para a tela Graph.
     GraphSync(Vec<harness_core::agents::NodeView>),
+    /// Lista de sessões persistidas para a tela Sessions.
+    SessionsSync(Vec<harness_core::store_port::SessionMeta>),
 }

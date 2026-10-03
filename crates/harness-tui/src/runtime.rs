@@ -26,8 +26,9 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::state::{Action, AppState};
+use crate::state::{Action, AppState, ChatMessage, DisplayRole};
 use crate::ui_msg::UiMsg;
+use harness_core::replay::replay_agent;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TuiError {
@@ -104,6 +105,7 @@ pub async fn run(
     tools: Option<Arc<dyn ToolPort>>,
     model: String,
     sandbox: String,
+    store: Option<Arc<dyn harness_core::store_port::SessionStore>>,
 ) -> Result<(), TuiError> {
     let _guard = TerminalGuard::enter()?;
     let backend = CrosstermBackend::new(stdout());
@@ -134,6 +136,13 @@ pub async fn run(
     let mut agent_inboxes: HashMap<AgentId, fmpsc::UnboundedSender<String>> = HashMap::new();
     let mut keys = EventStream::new();
     let mut graph_dirty = true;
+
+    // persiste sessão se houver store (spec/07)
+    let session_id = store.as_ref().map(|s| {
+        s.create_session("tui session", &model, &sandbox)
+            .unwrap_or_else(|_| "unknown".to_string())
+    });
+    let seq_counters: Arc<Mutex<HashMap<String, u64>>> = Arc::new(Mutex::new(HashMap::new()));
 
     loop {
         // sincroniza grafo e promove agentes enfileirados
@@ -238,6 +247,26 @@ pub async fn run(
                 match state.handle_key(key) {
                     Action::None => {}
                     Action::Quit => break,
+                    Action::ResumeSession(id) => {
+                        if let Some(st) = &store {
+                            if let Ok(events) = st.events(&id) {
+                                let msgs = replay_agent(&events, &root_id);
+                                history = msgs.clone();
+                                state.messages = msgs
+                                    .iter()
+                                    .map(|m| ChatMessage {
+                                        role: match m.role {
+                                            Role::User => DisplayRole::User,
+                                            Role::Assistant => DisplayRole::Assistant,
+                                            Role::System => DisplayRole::System,
+                                        },
+                                        content: m.text(),
+                                        streaming: false,
+                                    })
+                                    .collect();
+                            }
+                        }
+                    }
                     Action::Cancel => {
                         if let Some(h) = root_task.take() {
                             h.abort();
@@ -292,9 +321,27 @@ pub async fn run(
                         let tools2 = root_tools.clone();
                         let history_now = history.clone();
                         let model_name = model.clone();
+                        let store3 = store.clone();
+                        let session3 = session_id.clone();
+                        let seq_counters3 = seq_counters.clone();
                         root_task = Some(tokio::spawn(async move {
                             let sink_tx = tx2.clone();
                             let mut sink = move |ev: &CoreEvent| {
+                                if let (Some(st), Some(sess)) = (&store3, &session3) {
+                                    let agent = ev.agent().cloned()
+                                        .unwrap_or_else(|| AgentId::new("root"));
+                                    let mut counters = match seq_counters3.lock() {
+                                        Ok(c) => c,
+                                        Err(p) => p.into_inner(),
+                                    };
+                                    let seq = counters.entry(agent.as_str().to_string()).or_insert(0);
+                                    *seq += 1;
+                                    let ts = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_secs())
+                                        .unwrap_or_default();
+                                    let _ = st.append_event(sess, &agent, *seq, ts, ev);
+                                }
                                 let _ = sink_tx.send(UiMsg::Core(ev.clone()));
                             };
                             let approval = TuiApproval {

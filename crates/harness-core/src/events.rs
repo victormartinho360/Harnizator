@@ -24,11 +24,13 @@ pub enum Event {
         id: String,
         reason: String,
     },
-    /// Tool call executada.
+    /// Tool call executada. `output` é o conteúdo devolvido ao LLM
+    /// (necessário para replay fiel do histórico — spec/07).
     ToolCallCompleted {
         agent: AgentId,
         id: String,
         is_error: bool,
+        output: String,
     },
     /// Um agente foi criado (root ou subagente).
     AgentSpawned {
@@ -44,4 +46,22 @@ pub enum Event {
     ContextInjected { agent: AgentId, text: String },
     /// Erro geral de domínio.
     Error { message: String },
+}
+
+impl Event {
+    /// Agente dono do evento (Error não pertence a nenhum).
+    pub fn agent(&self) -> Option<&AgentId> {
+        match self {
+            Event::AssistantDelta { agent, .. }
+            | Event::ToolCallRequested { agent, .. }
+            | Event::ToolCallApproved { agent, .. }
+            | Event::ToolCallDenied { agent, .. }
+            | Event::ToolCallCompleted { agent, .. }
+            | Event::AgentFinished { agent }
+            | Event::AgentInterrupted { agent }
+            | Event::ContextInjected { agent, .. } => Some(agent),
+            Event::AgentSpawned { agent, .. } => Some(agent),
+            Event::Error { .. } => None,
+        }
+    }
 }

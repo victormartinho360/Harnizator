@@ -188,6 +188,7 @@ impl<'a> AgentLoop<'a> {
                                     agent: self.agent.clone(),
                                     id: call.id.clone(),
                                     is_error: outcome.is_error,
+                                    output: outcome.content.clone(),
                                 });
                                 outcome
                             }
@@ -214,6 +215,7 @@ impl<'a> AgentLoop<'a> {
                             agent: self.agent.clone(),
                             id: call.id.clone(),
                             is_error: outcome.is_error,
+                            output: outcome.content.clone(),
                         });
                         outcome
                     }

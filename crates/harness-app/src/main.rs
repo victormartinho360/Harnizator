@@ -8,11 +8,14 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use harness_core::provider_port::{ChatRequest, LlmProvider};
+use harness_core::replay::replay_agent;
+use harness_core::store_port::SessionStore;
 use harness_core::tool_port::ToolPort;
 use harness_core::{Message, ModelAlias};
 use harness_providers::{MockProvider, ProviderConfig, ProviderRouter, Vault};
+use harness_store::SqliteStore;
 use harness_tools::{FlagPolicy, SandboxMode, ToolCtx, Toolbelt};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -27,9 +30,20 @@ enum SandboxFlag {
     FullAccess,
 }
 
+#[derive(Debug, Subcommand)]
+enum Cmd {
+    /// Lista sessões persistidas.
+    Sessions,
+    /// Imprime o transcript de uma sessão.
+    Resume { id: String },
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "harness-rs", about = "HarnessRS — harness de agentes AI")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Cmd>,
+
     /// Cenário TOML do MockProvider (desenvolvimento/testes, offline).
     #[arg(long)]
     mock: Option<PathBuf>,
@@ -127,8 +141,39 @@ async fn dispatch(
     Ok(())
 }
 
+fn open_store() -> anyhow::Result<SqliteStore> {
+    std::fs::create_dir_all(dirs_config())?;
+    Ok(SqliteStore::open(&dirs_config().join("harness.db"))?)
+}
+
 async fn real_main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    match &cli.command {
+        Some(Cmd::Sessions) => {
+            for m in open_store()?.sessions()? {
+                println!(
+                    "{} │ {} │ {} · {}in/{}out",
+                    m.id, m.title, m.model, m.usage.input, m.usage.output
+                );
+            }
+            return Ok(());
+        }
+        Some(Cmd::Resume { id }) => {
+            let store = open_store()?;
+            let events = store.events(id)?;
+            let msgs = replay_agent(&events, &harness_core::AgentId::new("root"));
+            for m in msgs {
+                let role = match m.role {
+                    harness_core::Role::User => "you",
+                    harness_core::Role::Assistant => "assistant",
+                    harness_core::Role::System => "sys",
+                };
+                println!("[{role}] {}", m.text());
+            }
+            return Ok(());
+        }
+        None => {}
+    }
     let Some(prompt) = cli.prompt.clone() else {
         return run_tui(&cli).await;
     };
@@ -203,7 +248,8 @@ async fn run_tui(cli: &Cli) -> anyhow::Result<()> {
         None
     };
 
-    harness_tui::runtime::run(provider, tools, model, format!("{:?}", cli.sandbox)).await?;
+    let store: Option<Arc<dyn SessionStore>> = open_store().ok().map(|s| Arc::new(s) as _);
+    harness_tui::runtime::run(provider, tools, model, format!("{:?}", cli.sandbox), store).await?;
     Ok(())
 }
 

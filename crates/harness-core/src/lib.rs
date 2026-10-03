@@ -9,7 +9,9 @@ pub mod events;
 pub mod message;
 pub mod model_alias;
 pub mod provider_port;
+pub mod replay;
 pub mod service;
+pub mod store_port;
 pub mod subagent_tool;
 pub mod tool_port;
 

@@ -15,6 +15,7 @@ use crate::ui_msg::UiMsg;
 pub enum Screen {
     Chat,
     Graph,
+    Sessions,
     Help,
 }
 
@@ -61,6 +62,8 @@ pub enum Action {
     SendToAgent(AgentId, String),
     /// Injeta contexto no próximo turno do agente.
     InjectContext(AgentId, String),
+    /// Carrega uma sessão persistida no chat.
+    ResumeSession(String),
     /// Envia o texto como mensagem do usuário.
     Send(String),
     /// Resolve a aprovação pendente com a decisão dada.
@@ -87,6 +90,8 @@ pub struct AppState {
     pub graph_selected: usize,
     pub graph_offset: (u16, u16),
     pub input_mode: InputMode,
+    pub sessions: Vec<harness_core::store_port::SessionMeta>,
+    pub sessions_selected: usize,
 }
 
 impl AppState {
@@ -110,6 +115,8 @@ impl AppState {
             graph_selected: 0,
             graph_offset: (0, 0),
             input_mode: InputMode::Chat,
+            sessions: Vec::new(),
+            sessions_selected: 0,
         }
     }
 
@@ -191,6 +198,12 @@ impl AppState {
             UiMsg::ApprovalResolved => {
                 self.awaiting_approval = None;
             }
+            UiMsg::SessionsSync(sessions) => {
+                if !sessions.is_empty() && self.sessions_selected >= sessions.len() {
+                    self.sessions_selected = sessions.len() - 1;
+                }
+                self.sessions = sessions;
+            }
             UiMsg::GraphSync(nodes) => {
                 if !nodes.is_empty() && self.graph_selected >= nodes.len() {
                     self.graph_selected = nodes.len() - 1;
@@ -245,10 +258,17 @@ impl AppState {
                 self.screen = Screen::Help;
                 return Action::None;
             }
+            (KeyCode::Char('4'), KeyModifiers::CONTROL) => {
+                self.screen = Screen::Sessions;
+                return Action::None;
+            }
             _ => {}
         }
         if self.screen == Screen::Graph {
             return self.handle_graph_key(key);
+        }
+        if self.screen == Screen::Sessions {
+            return self.handle_sessions_key(key);
         }
         match (key.code, key.modifiers) {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => Action::Quit,
@@ -367,6 +387,36 @@ impl AppState {
             }
             (KeyCode::PageDown, _) => {
                 self.graph_offset.1 = self.graph_offset.1.saturating_sub(3);
+                Action::None
+            }
+            _ => Action::None,
+        }
+    }
+
+    fn handle_sessions_key(&mut self, key: KeyEvent) -> Action {
+        let n = self.sessions.len();
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                if n > 0 {
+                    self.sessions_selected = (self.sessions_selected + 1) % n;
+                }
+                Action::None
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if n > 0 {
+                    self.sessions_selected = (self.sessions_selected + n - 1) % n;
+                }
+                Action::None
+            }
+            KeyCode::Enter => {
+                self.screen = Screen::Chat;
+                self.sessions
+                    .get(self.sessions_selected)
+                    .map(|m| Action::ResumeSession(m.id.clone()))
+                    .unwrap_or(Action::None)
+            }
+            KeyCode::Esc => {
+                self.screen = Screen::Chat;
                 Action::None
             }
             _ => Action::None,

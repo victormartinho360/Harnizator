@@ -37,6 +37,7 @@ pub fn draw(f: &mut Frame, state: &AppState) {
             draw_graph(f, chunks[1], state);
             draw_input(f, chunks[2], state);
         }
+        Screen::Sessions => draw_sessions(f, chunks[1], state),
     }
     if state.screen == Screen::Help {
         draw_help(f, area);
@@ -186,6 +187,34 @@ fn plot(
         return;
     }
     buf[y as usize][x as usize] = (ch, style);
+}
+
+fn draw_sessions(f: &mut Frame, area: Rect, state: &AppState) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" sessões (Enter resume · Esc volta) ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let lines: Vec<Line> = state
+        .sessions
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let style = if i == state.sessions_selected {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            Line::from(Span::styled(
+                format!(
+                    " {} │ {} │ {} · {}in/{}out",
+                    m.id, m.title, m.model, m.usage.input, m.usage.output
+                ),
+                style,
+            ))
+        })
+        .collect();
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn draw_help(f: &mut Frame, area: Rect) {
