@@ -8,6 +8,7 @@ pub mod agents;
 pub mod events;
 pub mod message;
 pub mod model_alias;
+pub mod provider_admin;
 pub mod provider_port;
 pub mod replay;
 pub mod service;

@@ -5,6 +5,9 @@
 use harness_core::events::Event;
 use harness_core::tool_port::ToolCall;
 
+/// View de um provider na tela Providers (espelha `core::provider_admin::ProviderConfigView`).
+pub type ProviderView = harness_core::provider_admin::ProviderConfigView;
+
 /// Atualização de UI vinda do mundo async (agent loop, approvals).
 #[derive(Debug)]
 pub enum UiMsg {
@@ -22,4 +25,11 @@ pub enum UiMsg {
     GraphSync(Vec<harness_core::agents::NodeView>),
     /// Lista de sessões persistidas para a tela Sessions.
     SessionsSync(Vec<harness_core::store_port::SessionMeta>),
+    /// Lista de providers para a tela Providers.
+    ProvidersSync(Vec<ProviderView>),
+    /// Resultado do teste de conexão de um provider.
+    ProviderTestResult {
+        id: String,
+        result: Result<String, String>,
+    },
 }

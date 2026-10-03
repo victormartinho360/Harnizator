@@ -16,6 +16,7 @@ pub enum Screen {
     Chat,
     Graph,
     Sessions,
+    Providers,
     Help,
 }
 
@@ -25,6 +26,16 @@ pub enum InputMode {
     Chat,
     Message(AgentId),
     Inject(AgentId),
+    /// Definindo a chave de API de um provider (input mascarado).
+    SetKey(String),
+    AddProviderName,
+    AddProviderKind {
+        name: String,
+    },
+    AddProviderBaseUrl {
+        name: String,
+        kind: String,
+    },
 }
 
 /// Papel visual da mensagem no chat.
@@ -64,6 +75,18 @@ pub enum Action {
     InjectContext(AgentId, String),
     /// Carrega uma sessão persistida no chat.
     ResumeSession(String),
+    /// Define a chave de API de um provider no vault.
+    SetProviderKey(String, String),
+    /// Adiciona provider custom ao config.
+    AddProvider {
+        name: String,
+        kind: String,
+        base_url: String,
+    },
+    /// Remove provider custom.
+    RemoveProvider(String),
+    /// Testa conexão (models()) de um provider.
+    TestConnection(String),
     /// Envia o texto como mensagem do usuário.
     Send(String),
     /// Resolve a aprovação pendente com a decisão dada.
@@ -92,6 +115,10 @@ pub struct AppState {
     pub input_mode: InputMode,
     pub sessions: Vec<harness_core::store_port::SessionMeta>,
     pub sessions_selected: usize,
+    pub providers: Vec<crate::ui_msg::ProviderView>,
+    pub providers_selected: usize,
+    /// Status da tela Providers (resultado de teste de conexão etc).
+    pub providers_status: String,
 }
 
 impl AppState {
@@ -117,6 +144,9 @@ impl AppState {
             input_mode: InputMode::Chat,
             sessions: Vec::new(),
             sessions_selected: 0,
+            providers: Vec::new(),
+            providers_selected: 0,
+            providers_status: String::new(),
         }
     }
 
@@ -198,6 +228,18 @@ impl AppState {
             UiMsg::ApprovalResolved => {
                 self.awaiting_approval = None;
             }
+            UiMsg::ProvidersSync(list) => {
+                if !list.is_empty() && self.providers_selected >= list.len() {
+                    self.providers_selected = list.len() - 1;
+                }
+                self.providers = list;
+            }
+            UiMsg::ProviderTestResult { id, result } => {
+                self.providers_status = match result {
+                    Ok(info) => format!("{id}: ok ({info})"),
+                    Err(e) => format!("{id}: {e}"),
+                };
+            }
             UiMsg::SessionsSync(sessions) => {
                 if !sessions.is_empty() && self.sessions_selected >= sessions.len() {
                     self.sessions_selected = sessions.len() - 1;
@@ -262,6 +304,10 @@ impl AppState {
                 self.screen = Screen::Sessions;
                 return Action::None;
             }
+            (KeyCode::Char('5'), KeyModifiers::CONTROL) => {
+                self.screen = Screen::Providers;
+                return Action::None;
+            }
             _ => {}
         }
         if self.screen == Screen::Graph {
@@ -269,6 +315,9 @@ impl AppState {
         }
         if self.screen == Screen::Sessions {
             return self.handle_sessions_key(key);
+        }
+        if self.screen == Screen::Providers {
+            return self.handle_providers_key(key);
         }
         match (key.code, key.modifiers) {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => Action::Quit,
@@ -290,6 +339,39 @@ impl AppState {
                         let text = std::mem::take(&mut self.input);
                         self.input_mode = InputMode::Chat;
                         Action::InjectContext(id, text)
+                    }
+                    InputMode::SetKey(provider) => {
+                        let provider = provider.clone();
+                        let text = std::mem::take(&mut self.input);
+                        self.input_mode = InputMode::Chat;
+                        Action::SetProviderKey(provider, text)
+                    }
+                    InputMode::AddProviderName => {
+                        let name = std::mem::take(&mut self.input);
+                        self.input_mode = InputMode::AddProviderKind { name };
+                        Action::None
+                    }
+                    InputMode::AddProviderKind { name } => {
+                        let name = name.clone();
+                        let kind_input = std::mem::take(&mut self.input);
+                        let kind = if kind_input.is_empty() {
+                            "openai-compatible".to_string()
+                        } else {
+                            kind_input
+                        };
+                        self.input_mode = InputMode::AddProviderBaseUrl { name, kind };
+                        Action::None
+                    }
+                    InputMode::AddProviderBaseUrl { name, kind } => {
+                        let name = name.clone();
+                        let kind = kind.clone();
+                        let base_url = std::mem::take(&mut self.input);
+                        self.input_mode = InputMode::Chat;
+                        Action::AddProvider {
+                            name,
+                            kind,
+                            base_url,
+                        }
                     }
                 }
             }
@@ -419,6 +501,112 @@ impl AppState {
                 self.screen = Screen::Chat;
                 Action::None
             }
+            _ => Action::None,
+        }
+    }
+
+    fn handle_providers_key(&mut self, key: KeyEvent) -> Action {
+        // form/input modes: Enter avança/submete, Esc cancela, demais teclas editam
+        if self.input_mode != InputMode::Chat {
+            return match (key.code, key.modifiers) {
+                (KeyCode::Enter, _) => {
+                    let mode = std::mem::replace(&mut self.input_mode, InputMode::Chat);
+                    match mode {
+                        InputMode::SetKey(provider) => {
+                            let text = std::mem::take(&mut self.input);
+                            Action::SetProviderKey(provider, text)
+                        }
+                        InputMode::AddProviderName => {
+                            let name = std::mem::take(&mut self.input);
+                            if name.is_empty() {
+                                Action::None
+                            } else {
+                                self.input_mode = InputMode::AddProviderKind { name };
+                                Action::None
+                            }
+                        }
+                        InputMode::AddProviderKind { name } => {
+                            let kind_input = std::mem::take(&mut self.input);
+                            let kind = if kind_input.is_empty() {
+                                "openai-compatible".to_string()
+                            } else {
+                                kind_input
+                            };
+                            self.input_mode = InputMode::AddProviderBaseUrl { name, kind };
+                            Action::None
+                        }
+                        InputMode::AddProviderBaseUrl { name, kind } => {
+                            let base_url = std::mem::take(&mut self.input);
+                            Action::AddProvider {
+                                name,
+                                kind,
+                                base_url,
+                            }
+                        }
+                        other => {
+                            self.input_mode = other;
+                            Action::None
+                        }
+                    }
+                }
+                (KeyCode::Esc, _) => {
+                    self.input_mode = InputMode::Chat;
+                    self.input.clear();
+                    Action::None
+                }
+                (KeyCode::Backspace, _) => {
+                    self.input.pop();
+                    Action::None
+                }
+                (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                    self.input.push(c);
+                    Action::None
+                }
+                _ => Action::None,
+            };
+        }
+        let n = self.providers.len();
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => {
+                self.screen = Screen::Chat;
+                Action::None
+            }
+            (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
+                if n > 0 {
+                    self.providers_selected = (self.providers_selected + 1) % n;
+                }
+                Action::None
+            }
+            (KeyCode::Up, _) => {
+                if n > 0 {
+                    self.providers_selected = (self.providers_selected + n - 1) % n;
+                }
+                Action::None
+            }
+            (KeyCode::Char('k'), _) => self
+                .providers
+                .get(self.providers_selected)
+                .map(|p| {
+                    self.input_mode = InputMode::SetKey(p.id.clone());
+                    self.input.clear();
+                    Action::None
+                })
+                .unwrap_or(Action::None),
+            (KeyCode::Char('a'), _) => {
+                self.input_mode = InputMode::AddProviderName;
+                self.input.clear();
+                Action::None
+            }
+            (KeyCode::Char('t'), _) => self
+                .providers
+                .get(self.providers_selected)
+                .map(|p| Action::TestConnection(p.id.clone()))
+                .unwrap_or(Action::None),
+            (KeyCode::Char('d'), _) => self
+                .providers
+                .get(self.providers_selected)
+                .map(|p| Action::RemoveProvider(p.id.clone()))
+                .unwrap_or(Action::None),
             _ => Action::None,
         }
     }

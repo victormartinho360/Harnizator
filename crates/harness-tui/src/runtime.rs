@@ -106,6 +106,7 @@ pub async fn run(
     model: String,
     sandbox: String,
     store: Option<Arc<dyn harness_core::store_port::SessionStore>>,
+    admin: Option<Arc<dyn harness_core::provider_admin::ProviderAdmin>>,
 ) -> Result<(), TuiError> {
     let _guard = TerminalGuard::enter()?;
     let backend = CrosstermBackend::new(stdout());
@@ -308,6 +309,57 @@ pub async fn run(
                             graph_dirty = true;
                         }
                     }
+                    Action::SetProviderKey(id, key) => {
+                        if let Some(a) = &admin {
+                            let msg = match a.set_key(&id, &key) {
+                                Ok(()) => format!("{id}: chave salva"),
+                                Err(e) => format!("{id}: {e}"),
+                            };
+                            state.providers_status = msg;
+                            let list = a.views();
+                            let _ = tx.send(UiMsg::ProvidersSync(list));
+                        }
+                    }
+                    Action::AddProvider {
+                        name,
+                        kind,
+                        base_url,
+                    } => {
+                        if let Some(a) = &admin {
+                            let msg = match a.add_provider(&name, &kind, &base_url) {
+                                Ok(()) => format!("{name}: adicionado"),
+                                Err(e) => e,
+                            };
+                            state.providers_status = msg;
+                            let list = a.views();
+                            let _ = tx.send(UiMsg::ProvidersSync(list));
+                        }
+                    }
+                    Action::RemoveProvider(id) => {
+                        if let Some(a) = &admin {
+                            let msg = match a.remove_provider(&id) {
+                                Ok(()) => format!("{id}: removido"),
+                                Err(e) => e,
+                            };
+                            state.providers_status = msg;
+                            let list = a.views();
+                            let _ = tx.send(UiMsg::ProvidersSync(list));
+                        }
+                    }
+                    Action::TestConnection(id) => {
+                        if let Some(a) = &admin {
+                            let a2 = a.clone();
+                            let tx2 = tx.clone();
+                            let id2 = id.clone();
+                            tokio::spawn(async move {
+                                let result = a2.test_connection(&id2).await;
+                                let _ = tx2.send(UiMsg::ProviderTestResult {
+                                    id: id2,
+                                    result,
+                                });
+                            });
+                        }
+                    }
                     Action::Send(text) => {
                         state.push_user_message(text.clone());
                         history.push(Message {
@@ -372,6 +424,23 @@ pub async fn run(
                     }
                 }
             }
+        }
+
+        // sync de telas dedicadas conforme foco
+        match state.screen {
+            crate::state::Screen::Sessions => {
+                if let Some(st) = &store {
+                    if let Ok(list) = st.sessions() {
+                        state.apply_ui_msg(UiMsg::SessionsSync(list));
+                    }
+                }
+            }
+            crate::state::Screen::Providers => {
+                if let Some(a) = &admin {
+                    state.apply_ui_msg(UiMsg::ProvidersSync(a.views()));
+                }
+            }
+            _ => {}
         }
     }
     Ok(())

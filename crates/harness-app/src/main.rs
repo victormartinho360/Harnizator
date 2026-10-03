@@ -249,7 +249,22 @@ async fn run_tui(cli: &Cli) -> anyhow::Result<()> {
     };
 
     let store: Option<Arc<dyn SessionStore>> = open_store().ok().map(|s| Arc::new(s) as _);
-    harness_tui::runtime::run(provider, tools, model, format!("{:?}", cli.sandbox), store).await?;
+    let admin: Option<Arc<dyn harness_core::provider_admin::ProviderAdmin>> = {
+        let vault = Vault::open(&dirs_config().join("vault.age")).ok();
+        Some(Arc::new(harness_providers::ProviderAdminService::new(
+            dirs_config().join("config.toml"),
+            vault,
+        )))
+    };
+    harness_tui::runtime::run(
+        provider,
+        tools,
+        model,
+        format!("{:?}", cli.sandbox),
+        store,
+        admin,
+    )
+    .await?;
     Ok(())
 }
 

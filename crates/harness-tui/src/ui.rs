@@ -38,6 +38,10 @@ pub fn draw(f: &mut Frame, state: &AppState) {
             draw_input(f, chunks[2], state);
         }
         Screen::Sessions => draw_sessions(f, chunks[1], state),
+        Screen::Providers => {
+            draw_providers(f, chunks[1], state);
+            draw_input(f, chunks[2], state);
+        }
     }
     if state.screen == Screen::Help {
         draw_help(f, area);
@@ -217,6 +221,39 @@ fn draw_sessions(f: &mut Frame, area: Rect, state: &AppState) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+fn draw_providers(f: &mut Frame, area: Rect, state: &AppState) {
+    let block = Block::default().borders(Borders::ALL).title(
+        " providers (j/↑↓ navega · k chave · a adicionar · t testar · d remover · Esc volta) ",
+    );
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let mut lines: Vec<Line> = state
+        .providers
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let style = if i == state.providers_selected {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            let mark = if p.configured { "●" } else { "○" };
+            Line::from(Span::styled(
+                format!(" {} {} │ {} │ {}", mark, p.id, p.kind, p.base_url),
+                style,
+            ))
+        })
+        .collect();
+    if !state.providers_status.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            state.providers_status.clone(),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
 fn draw_help(f: &mut Frame, area: Rect) {
     let rect = Rect::new(
         area.x + area.width / 6,
@@ -308,13 +345,24 @@ fn draw_input(f: &mut Frame, area: Rect, state: &AppState) {
         InputMode::Chat => "input".to_string(),
         InputMode::Message(id) => format!("mensagem → {id}"),
         InputMode::Inject(id) => format!("inject contexto → {id}"),
+        InputMode::SetKey(id) => format!("api key → {id}"),
+        InputMode::AddProviderName => "novo provider: nome".to_string(),
+        InputMode::AddProviderKind { .. } => {
+            "novo provider: kind (enter = openai-compatible)".to_string()
+        }
+        InputMode::AddProviderBaseUrl { .. } => "novo provider: base_url".to_string(),
     };
     let border_style = if state.generating {
         Style::default().fg(Color::DarkGray)
     } else {
         Style::default().fg(Color::Cyan)
     };
-    let input = Paragraph::new(state.input.clone()).block(
+    let display = if matches!(state.input_mode, InputMode::SetKey(_)) {
+        "•".repeat(state.input.chars().count())
+    } else {
+        state.input.clone()
+    };
+    let input = Paragraph::new(display).block(
         Block::default()
             .borders(Borders::ALL)
             .title(title)
