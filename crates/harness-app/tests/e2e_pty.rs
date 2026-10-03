@@ -42,6 +42,29 @@ fn tui_boot_streams_reply_and_quits() {
 
 /// Fluxo de aprovação: full-access pede y para read_file; resposta final segue.
 #[test]
+fn tui_tab_opens_graph_screen() {
+    let bin = env!("CARGO_BIN_EXE_harness-rs");
+    let mut cmd = Command::new("/bin/sh");
+    cmd.arg("-c").arg(format!(
+        "stty rows 24 cols 80 2>/dev/null; exec {} --mock {} --no-store",
+        bin,
+        scenario()
+    ));
+    let mut p = rexpect::session::spawn_command(cmd, Some(30_000)).unwrap();
+    p.exp_string("harness-rs").unwrap();
+    p.send("z").unwrap();
+    p.flush().unwrap();
+    p.exp_string("z").unwrap(); // teclas chegam
+    p.send("\x07").unwrap();
+    p.flush().unwrap(); // Ctrl+G → grafo
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    p.exp_string("agentes").unwrap();
+    p.exp_string("root").unwrap();
+    p.send_control('c').unwrap();
+    p.exp_eof().unwrap();
+}
+
+#[test]
 fn tui_approves_tool_call() {
     let bin = env!("CARGO_BIN_EXE_harness-rs");
     let dir = tempfile::tempdir().unwrap();

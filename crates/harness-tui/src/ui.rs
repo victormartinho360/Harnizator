@@ -263,7 +263,9 @@ fn draw_help(f: &mut Frame, area: Rect) {
     );
     f.render_widget(Clear, rect);
     let text = vec![
-        Line::from("Ctrl+1 chat · Ctrl+2 grafo de agentes · Ctrl+3 ajuda"),
+        Line::from(
+            "Tab/Shift+Tab troca de tela · F1 chat · F2 grafo · F3 ajuda · F4 sessões · F5 providers",
+        ),
         Line::from("Enter envia · Esc cancela geração (ou sai do modo msg/i)"),
         Line::from("grafo: setas/hjkl navegam · m mensagem · i injeção · x interrompe"),
         Line::from("aprovação: y aprova · a aprova+allowlist · n nega"),
@@ -280,9 +282,9 @@ fn draw_status_bar(f: &mut Frame, area: Rect, state: &AppState) {
         state.model, state.sandbox, state.usage.input, state.usage.output
     );
     let right = if state.generating {
-        "generating… Esc cancela "
+        "gerando… Esc cancela "
     } else {
-        "Enter envia · ? help · Ctrl+C sai "
+        "Enter envia · Tab telas · F3 ajuda "
     };
     let width = area.width as usize;
     let pad = width

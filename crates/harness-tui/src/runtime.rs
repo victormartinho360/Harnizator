@@ -6,12 +6,11 @@ use std::collections::HashMap;
 use std::io::stdout;
 use std::sync::{Arc, Mutex};
 
-use crossterm::event::{Event as CrosstermEvent, EventStream, KeyEventKind};
+use crossterm::event::{self, Event as CrosstermEvent, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use futures::StreamExt;
 use futures::channel::mpsc as fmpsc;
 use futures::future::{AbortHandle, Abortable};
 use harness_core::agent_loop::AgentLoop;
@@ -135,7 +134,21 @@ pub async fn run(
     let mut root_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut agent_tasks: HashMap<AgentId, AbortHandle> = HashMap::new();
     let mut agent_inboxes: HashMap<AgentId, fmpsc::UnboundedSender<String>> = HashMap::new();
-    let mut keys = EventStream::new();
+    // leitor bloqueante de teclas → canal (mais robusto que EventStream em PTYs)
+    let (key_tx, mut key_rx) = mpsc::unbounded_channel::<crossterm::event::KeyEvent>();
+    std::thread::spawn(move || {
+        loop {
+            match event::read() {
+                Ok(CrosstermEvent::Key(k)) if k.kind == KeyEventKind::Press => {
+                    if key_tx.send(k).is_err() {
+                        break;
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    });
     let mut graph_dirty = true;
 
     // persiste sessão se houver store (spec/07)
@@ -242,9 +255,8 @@ pub async fn run(
                 }
                 graph_dirty = true;
             }
-            maybe_key = keys.next() => {
-                let Some(Ok(CrosstermEvent::Key(key))) = maybe_key else { continue };
-                if key.kind != KeyEventKind::Press { continue; }
+            maybe_key = key_rx.recv() => {
+                let Some(key) = maybe_key else { continue };
                 match state.handle_key(key) {
                     Action::None => {}
                     Action::Quit => break,

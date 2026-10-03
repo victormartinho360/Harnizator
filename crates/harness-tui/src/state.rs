@@ -286,7 +286,36 @@ impl AppState {
                 _ => Action::None,
             };
         }
-        // roteamento global de telas
+        // roteamento global de telas: Tab/Shift+Tab ciclam, F1-F5 saltam direto.
+        // Ctrl+dígito permanece como fallback (terminais com CSI-u); Ctrl+2 em
+        // terminais legacy chega como NUL e também abre o grafo.
+        match (key.code, key.modifiers) {
+            (KeyCode::Tab, KeyModifiers::NONE) => {
+                self.screen = next_screen(self.screen);
+                return Action::None;
+            }
+            (KeyCode::BackTab, _) => {
+                self.screen = prev_screen(self.screen);
+                return Action::None;
+            }
+            (KeyCode::F(n), KeyModifiers::NONE) => {
+                if let Some(scr) = screen_for_f(n) {
+                    self.screen = scr;
+                    return Action::None;
+                }
+            }
+            (KeyCode::Null, _) => {
+                self.screen = Screen::Graph;
+                return Action::None;
+            }
+            // atalhos Ctrl+letra confiáveis (Ctrl+dígito é ambíguo em legacy)
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Action::Quit,
+            (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
+                self.screen = Screen::Graph;
+                return Action::None;
+            }
+            _ => {}
+        }
         match (key.code, key.modifiers) {
             (KeyCode::Char('1'), KeyModifiers::CONTROL) => {
                 self.screen = Screen::Chat;
@@ -609,5 +638,30 @@ impl AppState {
                 .unwrap_or(Action::None),
             _ => Action::None,
         }
+    }
+}
+
+fn next_screen(s: Screen) -> Screen {
+    match s {
+        Screen::Chat => Screen::Graph,
+        Screen::Graph => Screen::Sessions,
+        Screen::Sessions => Screen::Providers,
+        Screen::Providers => Screen::Help,
+        Screen::Help => Screen::Chat,
+    }
+}
+
+fn prev_screen(s: Screen) -> Screen {
+    next_screen(next_screen(next_screen(next_screen(s))))
+}
+
+fn screen_for_f(n: u8) -> Option<Screen> {
+    match n {
+        1 => Some(Screen::Chat),
+        2 => Some(Screen::Graph),
+        3 => Some(Screen::Help),
+        4 => Some(Screen::Sessions),
+        5 => Some(Screen::Providers),
+        _ => None,
     }
 }

@@ -2,7 +2,7 @@
 source: crates/harness-tui/tests/sessions.rs
 expression: "format!(\"{}\", term.backend())"
 ---
-" harness-rs │ m │ only-flagged │ ↑0 ↓0        Enter envia · ? help · Ctrl+C sai "
+" harness-rs │ m │ only-flagged │ ↑0 ↓0       Enter envia · Tab telas · F3 ajuda "
 "┌ sessões (Enter resume · Esc volta) ──────────────────────────────────────────┐"
 "│ s-bbb │ second │ m · 5in/2out                                                │"
 "│ s-aaa │ first │ m · 10in/3out                                                │"

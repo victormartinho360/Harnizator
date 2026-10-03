@@ -2,7 +2,7 @@
 source: crates/harness-tui/tests/graph.rs
 expression: "render(&s, 80, 24)"
 ---
-" harness-rs │ m │ only-flagged │ ↑0 ↓0        Enter envia · ? help · Ctrl+C sai "
+" harness-rs │ m │ only-flagged │ ↑0 ↓0       Enter envia · Tab telas · F3 ajuda "
 "[sys]                                                                           "
 "HarnessRS — Enter envia · Esc cancela geração · Ctrl+C sai                      "
 "                                                                                "

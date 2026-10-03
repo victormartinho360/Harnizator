@@ -58,7 +58,7 @@ export HARNESSRS_VAULT_KEY="sua-senha-do-vault"
 |---|---|
 | `Enter` | envia mensagem |
 | `Esc` | cancela geração / fecha modal / sai de modo msg/inject |
-| `Ctrl+1` | chat · `Ctrl+2` grafo · `Ctrl+3` ajuda · `Ctrl+4` sessões · `Ctrl+5` providers |
+| `Tab` / `Shift+Tab` | cicla as telas · `F1` chat · `F2` grafo · `F3` ajuda · `F4` sessões · `F5` providers · (`Ctrl+G` = grafo; Ctrl+dígito funciona em terminais com CSI-u) |
 | `Ctrl+C` | sai |
 | No modal de aprovação | `y` aprova · `a` aprova e registra · `n`/`Esc` nega |
 | No grafo | `hjkl`/setas navegam · `Enter` abre chat · `m` manda mensagem · `i` injeta contexto · `x` interrompe |
