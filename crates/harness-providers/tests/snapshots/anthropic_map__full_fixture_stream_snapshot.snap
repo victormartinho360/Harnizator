@@ -1,0 +1,22 @@
+---
+source: crates/harness-providers/tests/anthropic_map.rs
+expression: mapped
+---
+[
+    MessageStart {
+        input_tokens: 12,
+    },
+    Ignored,
+    Ignored,
+    TextDelta(
+        "Hello",
+    ),
+    TextDelta(
+        " world",
+    ),
+    Ignored,
+    OutputUsage {
+        output_tokens: 7,
+    },
+    MessageStop,
+]
