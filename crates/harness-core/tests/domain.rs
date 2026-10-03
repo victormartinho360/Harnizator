@@ -34,11 +34,20 @@ fn message_user_text_constructor() {
 #[test]
 fn event_serializes_roundtrip() {
     let events = vec![
-        Event::AssistantDelta { text: "hi".into() },
+        Event::AssistantDelta {
+            agent: AgentId::new("root"),
+            text: "hi".into(),
+        },
         Event::AgentSpawned {
             agent: AgentId::new("a1"),
             parent: None,
             label: "root".into(),
+        },
+        Event::ToolCallRequested {
+            agent: AgentId::new("a1"),
+            id: "call-1".into(),
+            name: "read_file".into(),
+            args: serde_json::json!({"path": "a.txt"}),
         },
         Event::Error {
             message: "boom".into(),
@@ -52,6 +61,7 @@ fn event_serializes_roundtrip() {
 #[test]
 fn snapshot_event_debug_format_is_stable() {
     let ev = Event::AssistantDelta {
+        agent: AgentId::new("root"),
         text: "hello".into(),
     };
     insta::assert_debug_snapshot!(ev);

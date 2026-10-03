@@ -27,6 +27,7 @@ async fn headless_writes_deltas_and_reports_usage() {
         messages: vec![Message::user("hello")],
         max_tokens: 128,
         system: None,
+        tools: vec![],
     };
     let mut out: Vec<u8> = vec![];
     let summary = run_headless(&provider, req, &mut out).await.unwrap();
@@ -50,6 +51,7 @@ async fn headless_propagates_provider_errors() {
         messages: vec![Message::user("no match here")],
         max_tokens: 128,
         system: None,
+        tools: vec![],
     };
     let mut out: Vec<u8> = vec![];
     assert!(run_headless(&provider, req, &mut out).await.is_err());

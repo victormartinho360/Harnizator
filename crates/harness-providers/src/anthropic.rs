@@ -3,6 +3,9 @@
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::json;
 
+use harness_core::tool_port::ToolCall;
+use harness_core::{ContentBlock, Role};
+
 use crate::http::send_with_retry;
 use crate::provider::{
     ChatRequest, LlmProvider, ModelInfo, ProviderError, StreamChunk, StreamResult,
@@ -18,6 +21,9 @@ pub const API_VERSION: &str = "2023-06-01";
 pub enum AnthropicEvent {
     MessageStart { input_tokens: u64 },
     TextDelta(String),
+    ToolUseStart { id: String, name: String },
+    InputJsonDelta(String),
+    ContentBlockStop,
     OutputUsage { output_tokens: u64 },
     MessageStop,
     Ignored,
@@ -35,15 +41,35 @@ impl AnthropicEvent {
                     input_tokens: input,
                 })
             }
-            Some("content_block_delta") => {
-                if v["delta"]["type"].as_str() == Some("text_delta") {
-                    Ok(Self::TextDelta(
-                        v["delta"]["text"].as_str().unwrap_or_default().to_string(),
-                    ))
+            Some("content_block_start") => {
+                if v["content_block"]["type"].as_str() == Some("tool_use") {
+                    Ok(Self::ToolUseStart {
+                        id: v["content_block"]["id"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
+                        name: v["content_block"]["name"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
+                    })
                 } else {
                     Ok(Self::Ignored)
                 }
             }
+            Some("content_block_delta") => match v["delta"]["type"].as_str() {
+                Some("text_delta") => Ok(Self::TextDelta(
+                    v["delta"]["text"].as_str().unwrap_or_default().to_string(),
+                )),
+                Some("input_json_delta") => Ok(Self::InputJsonDelta(
+                    v["delta"]["partial_json"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
+                )),
+                _ => Ok(Self::Ignored),
+            },
+            Some("content_block_stop") => Ok(Self::ContentBlockStop),
             Some("message_delta") => {
                 let output = v["usage"]["output_tokens"].as_u64().unwrap_or(0);
                 Ok(Self::OutputUsage {
@@ -79,6 +105,31 @@ impl AnthropicProvider {
     }
 }
 
+/// Converte blocos de domínio para o formato da Messages API.
+fn anthropic_content(msg: &harness_core::Message) -> serde_json::Value {
+    let blocks: Vec<serde_json::Value> = msg
+        .content
+        .iter()
+        .map(|b| match b {
+            ContentBlock::Text { text } => json!({"type": "text", "text": text}),
+            ContentBlock::ToolUse { id, name, input } => {
+                json!({"type": "tool_use", "id": id, "name": name, "input": input})
+            }
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => json!({
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": content,
+                "is_error": is_error,
+            }),
+        })
+        .collect();
+    json!(blocks)
+}
+
 #[async_trait::async_trait]
 impl LlmProvider for AnthropicProvider {
     fn id(&self) -> &str {
@@ -92,10 +143,10 @@ impl LlmProvider for AnthropicProvider {
             .map(|m| {
                 json!({
                     "role": match m.role {
-                        harness_core::Role::Assistant => "assistant",
+                        Role::Assistant => "assistant",
                         _ => "user",
                     },
-                    "content": m.text(),
+                    "content": anthropic_content(m),
                 })
             })
             .collect();
@@ -107,6 +158,18 @@ impl LlmProvider for AnthropicProvider {
         });
         if let Some(system) = req.system {
             body["system"] = json!(system);
+        }
+        if !req.tools.is_empty() {
+            body["tools"] = json!(
+                req.tools
+                    .iter()
+                    .map(|t| json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": t.input_schema,
+                    }))
+                    .collect::<Vec<_>>()
+            );
         }
 
         let url = format!("{}/messages", self.base_url);
@@ -122,34 +185,63 @@ impl LlmProvider for AnthropicProvider {
 
         let mut input_tokens = 0u64;
         let mut output_tokens = 0u64;
+        // acumulador de tool_use: args chegam como JSON parcial
+        let mut pending_tool: Option<(String, String, String)> = None;
         Ok(sse_response_stream(resp, move |ev| {
             let mapped = match AnthropicEvent::from_sse(ev) {
                 Ok(m) => m,
                 Err(e) => {
-                    return MapOutcome {
-                        chunks: vec![Err(e)],
-                        is_stop: false,
-                    };
+                    return map(None, Err(e));
                 }
             };
-            match mapped {
+            let map_local = mapped;
+            match map_local {
                 AnthropicEvent::MessageStart { input_tokens: i } => {
                     input_tokens = i;
-                    MapOutcome {
-                        chunks: vec![Ok(StreamChunk::MessageStart)],
-                        is_stop: false,
-                    }
+                    map(Some(StreamChunk::MessageStart), Ok(()))
                 }
-                AnthropicEvent::TextDelta(t) => MapOutcome {
-                    chunks: vec![Ok(StreamChunk::TextDelta(t))],
-                    is_stop: false,
-                },
+                AnthropicEvent::TextDelta(t) => map(Some(StreamChunk::TextDelta(t)), Ok(())),
+                AnthropicEvent::ToolUseStart { id, name } => {
+                    pending_tool = Some((id, name, String::new()));
+                    map(None, Ok(()))
+                }
+                AnthropicEvent::InputJsonDelta(partial) => {
+                    if let Some((_, _, buf)) = pending_tool.as_mut() {
+                        buf.push_str(&partial);
+                    }
+                    map(None, Ok(()))
+                }
+                AnthropicEvent::ContentBlockStop => {
+                    if let Some((id, name, buf)) = pending_tool.take() {
+                        let trimmed = buf.trim();
+                        if trimmed.is_empty() {
+                            return map(
+                                Some(StreamChunk::ToolUse(ToolCall {
+                                    id,
+                                    name,
+                                    args: serde_json::json!({}),
+                                })),
+                                Ok(()),
+                            );
+                        }
+                        return match serde_json::from_str(trimmed) {
+                            Ok(args) => map(
+                                Some(StreamChunk::ToolUse(ToolCall { id, name, args })),
+                                Ok(()),
+                            ),
+                            Err(e) => map(
+                                None,
+                                Err(ProviderError::Stream(format!(
+                                    "invalid tool args JSON: {e}"
+                                ))),
+                            ),
+                        };
+                    }
+                    map(None, Ok(()))
+                }
                 AnthropicEvent::OutputUsage { output_tokens: o } => {
                     output_tokens = o;
-                    MapOutcome {
-                        chunks: vec![],
-                        is_stop: false,
-                    }
+                    map(None, Ok(()))
                 }
                 AnthropicEvent::MessageStop => MapOutcome {
                     chunks: vec![
@@ -161,10 +253,7 @@ impl LlmProvider for AnthropicProvider {
                     ],
                     is_stop: true,
                 },
-                AnthropicEvent::Ignored => MapOutcome {
-                    chunks: vec![],
-                    is_stop: false,
-                },
+                AnthropicEvent::Ignored => map(None, Ok(())),
             }
         }))
     }
@@ -173,5 +262,18 @@ impl LlmProvider for AnthropicProvider {
         Err(ProviderError::Stream(
             "models() not implemented yet".to_string(),
         ))
+    }
+}
+
+/// Helper local: monta MapOutcome para zero/um chunk Ok ou um Err.
+fn map(chunk: Option<StreamChunk>, unit: Result<(), ProviderError>) -> MapOutcome {
+    let chunks = match (chunk, unit) {
+        (Some(c), _) => vec![Ok(c)],
+        (None, Ok(())) => vec![],
+        (None, Err(e)) => vec![Err(e)],
+    };
+    MapOutcome {
+        chunks,
+        is_stop: false,
     }
 }

@@ -14,7 +14,7 @@ expression: mapped
     TextDelta(
         " world",
     ),
-    Ignored,
+    ContentBlockStop,
     OutputUsage {
         output_tokens: 7,
     },

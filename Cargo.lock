@@ -787,6 +787,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glob"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
+
+[[package]]
 name = "h2"
 version = "0.4.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -815,7 +821,9 @@ dependencies = [
  "harness-cli",
  "harness-core",
  "harness-providers",
+ "harness-tools",
  "predicates",
+ "tempfile",
  "tokio",
  "toml 0.8.23",
 ]
@@ -824,9 +832,12 @@ dependencies = [
 name = "harness-cli"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "futures",
  "harness-core",
  "harness-providers",
+ "harness-tools",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -835,10 +846,13 @@ dependencies = [
 name = "harness-core"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
+ "futures",
  "insta",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -862,6 +876,21 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "wiremock",
+]
+
+[[package]]
+name = "harness-tools"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "glob",
+ "harness-core",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

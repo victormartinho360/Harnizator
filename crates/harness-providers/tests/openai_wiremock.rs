@@ -23,6 +23,7 @@ fn req() -> ChatRequest {
         messages: vec![Message::user("hello")],
         max_tokens: 64,
         system: None,
+        tools: vec![],
     }
 }
 

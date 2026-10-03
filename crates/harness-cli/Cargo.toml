@@ -9,9 +9,12 @@ workspace = true
 
 [dependencies]
 harness-core = { path = "../harness-core" }
-harness-providers = { path = "../harness-providers" }
 futures.workspace = true
+async-trait = "0.1"
 thiserror.workspace = true
 
 [dev-dependencies]
+harness-providers = { path = "../harness-providers" }
+harness-tools = { path = "../harness-tools" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile = "3"

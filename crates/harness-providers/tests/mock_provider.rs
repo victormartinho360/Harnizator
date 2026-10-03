@@ -32,6 +32,7 @@ fn req(text: &str) -> ChatRequest {
         messages: vec![Message::user(text)],
         max_tokens: 1024,
         system: None,
+        tools: vec![],
     }
 }
 

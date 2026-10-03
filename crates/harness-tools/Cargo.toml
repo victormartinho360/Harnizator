@@ -1,5 +1,5 @@
 [package]
-name = "harness-core"
+name = "harness-tools"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,12 +8,15 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+harness-core = { path = "../harness-core" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 async-trait = "0.1"
-futures.workspace = true
+tokio = { workspace = true, features = ["process", "time"] }
+regex = "1"
+glob = "0.3"
 
 [dev-dependencies]
-insta.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
+tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

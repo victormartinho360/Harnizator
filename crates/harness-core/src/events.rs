@@ -4,11 +4,32 @@ use crate::AgentId;
 
 /// Eventos de domínio do sistema. Seriáveis para persistência (Wave 5)
 /// e consumíveis por qualquer UI via `UiUpdate` (Wave 3+).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Event {
     /// Delta de texto de streaming do assistente.
-    AssistantDelta { text: String },
+    AssistantDelta { agent: AgentId, text: String },
+    /// Tool call recebida, aguardando decisão de sandbox/aprovação.
+    ToolCallRequested {
+        agent: AgentId,
+        id: String,
+        name: String,
+        args: serde_json::Value,
+    },
+    /// Tool call aprovada (auto-allow ou usuário).
+    ToolCallApproved { agent: AgentId, id: String },
+    /// Tool call negada (política ou usuário).
+    ToolCallDenied {
+        agent: AgentId,
+        id: String,
+        reason: String,
+    },
+    /// Tool call executada.
+    ToolCallCompleted {
+        agent: AgentId,
+        id: String,
+        is_error: bool,
+    },
     /// Um agente foi criado (root ou subagente).
     AgentSpawned {
         agent: AgentId,

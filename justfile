@@ -36,7 +36,8 @@ check-arch:
     #!/usr/bin/env bash
     set -euo pipefail
     forbidden="tokio|reqwest|ratatui|crossterm|rusqlite"
-    if grep -E "^($forbidden)" crates/harness-core/Cargo.toml; then
+    # apenas a seção [dependencies] conta (dev-deps de teste são permitidas)
+    if awk '/^\[dependencies\]/{f=1;next} /^\[/{f=0} f' crates/harness-core/Cargo.toml | grep -E "^($forbidden)"; then
         echo "❌ harness-core tem dependência proibida (ver spec/09-multi-ui.md)" >&2
         exit 1
     fi

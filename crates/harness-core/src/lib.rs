@@ -3,9 +3,12 @@
 //! ZERO dependências de IO/TUI/HTTP — apenas tipos de domínio, eventos
 //! e a máquina de estados do agent loop (Wave 2+).
 
+pub mod agent_loop;
 pub mod events;
 pub mod message;
 pub mod model_alias;
+pub mod provider_port;
+pub mod tool_port;
 
 pub use events::Event;
 pub use message::{ContentBlock, Message, Role};

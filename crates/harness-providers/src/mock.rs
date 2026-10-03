@@ -18,6 +18,17 @@ enum ScenarioChunk {
     Text { text: String },
     Error { error: String },
     Usage { usage: ScenarioUsage },
+    ToolUse { tool_use: ScenarioToolUse },
+}
+
+/// Tool call scriptada: o cenário emite um `StreamChunk::ToolUse`.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ScenarioToolUse {
+    name: String,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    args: serde_json::Value,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -59,13 +70,27 @@ impl MockProvider {
         Self::from_scenario_str(&src)
     }
 
+    /// Texto "pesquisável" de uma mensagem: blocos de texto + conteúdo
+    /// de tool_results (permite cenários multi-turno com tools).
+    fn searchable_text(m: &harness_core::Message) -> String {
+        m.content
+            .iter()
+            .filter_map(|b| match b {
+                harness_core::ContentBlock::Text { text } => Some(text.clone()),
+                harness_core::ContentBlock::ToolResult { content, .. } => Some(content.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn match_response(&self, req: &ChatRequest) -> Option<&ScenarioResponse> {
         let last_user_text = req
             .messages
             .iter()
             .rev()
             .find(|m| matches!(m.role, harness_core::Role::User))
-            .map(|m| m.text())
+            .map(Self::searchable_text)
             .unwrap_or_default();
         self.scenario
             .response
@@ -98,6 +123,16 @@ impl LlmProvider for MockProvider {
                     input: usage.input,
                     output: usage.output,
                 })),
+                ScenarioChunk::ToolUse { tool_use } => items.push(Ok(StreamChunk::ToolUse(
+                    harness_core::tool_port::ToolCall {
+                        id: tool_use
+                            .id
+                            .clone()
+                            .unwrap_or_else(|| format!("mock-call-{}", tool_use.name)),
+                        name: tool_use.name.clone(),
+                        args: tool_use.args.clone(),
+                    },
+                ))),
             }
         }
         items.push(Ok(StreamChunk::MessageStop));

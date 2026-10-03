@@ -3,5 +3,8 @@ source: crates/harness-core/tests/domain.rs
 expression: ev
 ---
 AssistantDelta {
+    agent: AgentId(
+        "root",
+    ),
     text: "hello",
 }
