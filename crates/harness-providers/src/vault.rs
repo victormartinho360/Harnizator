@@ -2,11 +2,16 @@
 //!
 //! Conteúdo: TOML `provider_id = "api_key"` criptografado com passphrase.
 //! A passphrase vem do env `HARNESSRS_VAULT_KEY` (OS keyring: wave futura).
+//!
+//! O mapa decriptado fica em cache na memória (Mutex) e é recarregado
+//! apenas quando o arquivo muda no disco (mtime). Isso evita rodar o
+//! KDF scrypt a cada leitura — era o que travava a UI.
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use secrecy::{ExposeSecret, SecretString};
 
@@ -31,6 +36,8 @@ pub enum VaultError {
 pub struct Vault {
     path: PathBuf,
     key: Arc<SecretString>,
+    /// (mtime do arquivo, conteúdo decriptado). `None` = ainda não carregado.
+    cache: Arc<Mutex<Option<(Option<SystemTime>, BTreeMap<String, String>)>>>,
 }
 
 impl Vault {
@@ -45,13 +52,43 @@ impl Vault {
         let vault = Self {
             path: path.to_path_buf(),
             key: Arc::new(key),
+            cache: Arc::new(Mutex::new(None)),
         };
         // valida a chave contra o conteúdo existente (ou arquivo ausente)
         vault.load()?;
         Ok(vault)
     }
 
+    fn file_mtime(&self) -> Option<SystemTime> {
+        std::fs::metadata(&self.path)
+            .and_then(|m| m.modified())
+            .ok()
+    }
+
+    /// Carrega o mapa decriptado, usando cache se o arquivo não mudou.
     fn load(&self) -> Result<BTreeMap<String, String>, VaultError> {
+        let mtime = self.file_mtime();
+        {
+            let cache = match self.cache.lock() {
+                Ok(c) => c,
+                Err(p) => p.into_inner(),
+            };
+            if let Some((cached_mtime, map)) = &*cache {
+                if *cached_mtime == mtime {
+                    return Ok(map.clone());
+                }
+            }
+        }
+        let map = self.load_from_disk()?;
+        let mut cache = match self.cache.lock() {
+            Ok(c) => c,
+            Err(p) => p.into_inner(),
+        };
+        *cache = Some((mtime, map.clone()));
+        Ok(map)
+    }
+
+    fn load_from_disk(&self) -> Result<BTreeMap<String, String>, VaultError> {
         let mut data = Vec::new();
         match std::fs::File::open(&self.path) {
             Ok(mut f) => {
@@ -111,6 +148,13 @@ impl Vault {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600))?;
         }
+        // atualiza o cache com o novo conteúdo
+        let mtime = self.file_mtime();
+        let mut cache = match self.cache.lock() {
+            Ok(c) => c,
+            Err(p) => p.into_inner(),
+        };
+        *cache = Some((mtime, map.clone()));
         Ok(())
     }
 
