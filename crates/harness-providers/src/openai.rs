@@ -192,8 +192,23 @@ impl LlmProvider for OpenAiProvider {
     }
 
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        Err(ProviderError::Stream(
-            "models() not implemented yet".to_string(),
-        ))
+        let url = format!("{}/models", self.base_url);
+        let key = self.api_key.clone();
+        let resp = send_with_retry(|| self.client.get(&url).bearer_auth(key.expose_secret()))
+            .await?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Stream(e.to_string()))?;
+        let data = body["data"].as_array().cloned().unwrap_or_default();
+        Ok(data
+            .into_iter()
+            .filter_map(|m| {
+                m["id"].as_str().map(|id| ModelInfo {
+                    id: id.to_string(),
+                    display_name: m["display_name"].as_str().map(String::from),
+                })
+            })
+            .collect())
     }
 }
