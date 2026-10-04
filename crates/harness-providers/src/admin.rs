@@ -43,6 +43,11 @@ impl ProviderAdmin for ProviderAdminService {
             Ok(v) => v,
             Err(p) => p.into_inner(),
         };
+        // Decripta o vault uma única vez (scrypt é caro; get() por id decriptaria N vezes)
+        let configured_ids: std::collections::BTreeSet<String> = vault
+            .as_ref()
+            .map(|v| v.list_ids().into_iter().collect())
+            .unwrap_or_default();
         cfg.providers
             .iter()
             .map(|(id, e)| {
@@ -59,9 +64,7 @@ impl ProviderAdmin for ProviderAdminService {
                 let base = e.base_url.clone().unwrap_or_else(|| {
                     e.base_url(e.kind_named(id).unwrap_or(ProviderKind::OpenAi))
                 });
-                let configured = vault
-                    .as_ref()
-                    .is_some_and(|v| v.get(id).ok().flatten().is_some());
+                let configured = configured_ids.contains(id);
                 ProviderConfigView {
                     id: id.clone(),
                     kind,

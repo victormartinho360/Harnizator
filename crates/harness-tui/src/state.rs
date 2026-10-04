@@ -704,7 +704,15 @@ impl AppState {
             (KeyCode::Enter, _) => self
                 .providers
                 .get(self.providers_selected)
-                .map(|p| Action::ListModels(p.id.clone()))
+                .map(|p| {
+                    // abre o palette já no estágio de modelos (a lista chega via ModelsSync)
+                    self.screen = Screen::CommandPalette;
+                    self.input_mode = InputMode::CommandPalette { query: String::new() };
+                    self.palette_provider = None;
+                    self.palette_models.clear();
+                    self.palette_selected = 0;
+                    Action::ListModels(p.id.clone())
+                })
                 .unwrap_or(Action::None),
             (KeyCode::Esc, _) => {
                 self.screen = Screen::Chat;

@@ -133,3 +133,35 @@ fn palette_scrolls_to_keep_selection_visible() {
     let screen = format!("{}", term.backend());
     assert!(screen.contains("model-00"));
 }
+
+#[test]
+fn palette_renders_models_after_provider_selected() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut s = providers_state();
+    // Enter no primeiro provider → dispara fetch
+    let action = s.handle_key(enter());
+    assert!(matches!(action, Action::ListModels(_)));
+    // resposta chega
+    s.apply_ui_msg(UiMsg::ModelsSync {
+        provider: "anthropic".into(),
+        result: Ok(vec!["claude-a".into(), "claude-b".into()]),
+    });
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| harness_tui::ui::draw(f, &s)).unwrap();
+    let screen = format!("{}", term.backend());
+    assert!(screen.contains("claude-a"), "modelo deve aparecer:\n{screen}");
+    assert!(screen.contains("claude-b"), "modelo deve aparecer:\n{screen}");
+}
+
+#[test]
+fn palette_renders_providers_on_open() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let s = providers_state();
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| harness_tui::ui::draw(f, &s)).unwrap();
+    let screen = format!("{}", term.backend());
+    assert!(screen.contains("anthropic"), "provider deve aparecer:\n{screen}");
+    assert!(screen.contains("nim"), "provider deve aparecer:\n{screen}");
+}
