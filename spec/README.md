@@ -1,4 +1,4 @@
-# HarnessRS — Especificação Técnica
+# Harnizator — Especificação Técnica
 
 Harness de agentes AI **full-TUI**, escrito 100% em Rust, desenvolvido estritamente com **TDD**.
 

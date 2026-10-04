@@ -3,7 +3,7 @@
 ## Modelo de configuração (D3, D17)
 
 ```toml
-# ~/.config/harnessrs/config.toml
+# ~/.config/harnizator/config.toml
 default_model = "anthropic/claude-sonnet-4-5"
 
 [providers.anthropic]
@@ -28,8 +28,8 @@ Defaults embutidos: `anthropic`, `openai`, `google` aparecem pré-criados (sem c
 
 ## Vault (D11)
 
-- Arquivo `~/.config/harnessrs/vault.age`, mapa `provider_id → api_key`.
-- Chave de criptografia: OS keyring (`keyring` crate, service `harnessrs`); fallback `HARNESSRS_VAULT_KEY` env (útil em CI/headless).
+- Arquivo `~/.config/harnizator/vault.age`, mapa `provider_id → api_key`.
+- Chave de criptografia: OS keyring (`keyring` crate, service `harnizator`); fallback `HARNIZATOR_VAULT_KEY` env (útil em CI/headless).
 - API: `Vault::get(id) -> Result<SecretString>`, `set`, `delete`, `list_ids`. Nunca loga segredos (Debug redacted via `secrecy`).
 
 ## Streaming

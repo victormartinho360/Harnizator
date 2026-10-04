@@ -3,15 +3,15 @@
 Cada wave: **(1) escrever os testes listados → (2) vermelho → (3) implementar → (4) verde + refactor → (5) `just ci` verde**. Nenhuma wave começa sem a anterior mergeada.
 
 ## Wave 0 — Fundação (½–1 dia)
-**Escopo**: workspace, justfile/xtask, CI, lints, `harness-core` skeleton com tipos e `Event`.
+**Escopo**: workspace, justfile/xtask, CI, lints, `harnizator-core` skeleton com tipos e `Event`.
 - Testes: skeleton compila; `just ci` roda; exemplo de snapshot insta funcionando; `MockProvider` básico + cenario TOML.
-- Entregável: `harness-core`, `harness-providers::MockProvider`, pipeline CI verde.
+- Entregável: `harnizator-core`, `harnizator-providers::MockProvider`, pipeline CI verde.
 
 ## Wave 1 — Providers & Vault
 **Docs**: 03-providers.md.
 - Testes 03 → parsers SSE (fixtures + proptest), router, vault, wiremock (auth/429/cut).
 - Impl: `LlmProvider` trait, Anthropic + OpenAI-compatible, vault age, retry/backoff.
-- Entregável: chat **UI headless formal (adapter `harness-cli`)** falando com provider real e mock: `harness-rs --headless --mock ...`. Essa UI é a primeira prova do desacoplamento (ver 09-multi-ui.md).
+- Entregável: chat **UI headless formal (adapter `harnizator-cli`)** falando com provider real e mock: `harnizator --headless --mock ...`. Essa UI é a primeira prova do desacoplamento (ver 09-multi-ui.md).
 
 ## Wave 2 — Tools & Sandbox
 **Docs**: 04-tools-sandbox.md.

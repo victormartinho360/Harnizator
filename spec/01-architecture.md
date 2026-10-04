@@ -7,18 +7,18 @@
 ```
 ┌────────────────────────────────────────────────────────┐
 │ ADAPTERS DE ENTRADA (UIs — plugáveis, N implementações)│
-│   harness-tui (ratatui) · harness-cli (headless) ·     │
+│   harnizator-tui (ratatui) · harnizator-cli (headless) ·     │
 │   futura: GUI/web/IDE                                  │
 ├────────────────────────────────────────────────────────┤
 │ ADAPTERS DE SAÍDA (infra)                              │
-│   harness-providers (HTTP/SSE, vault) ·                │
-│   harness-tools (fs/shell) · harness-store (SQLite)    │
+│   harnizator-providers (HTTP/SSE, vault) ·                │
+│   harnizator-tools (fs/shell) · harnizator-store (SQLite)    │
 ├────────────────────────────────────────────────────────┤
-│ USE CASES + PORTS        (harness-core)                │
+│ USE CASES + PORTS        (harnizator-core)                │
 │   AgentLoop, dispatch(Intent) → Vec<Effect>,           │
 │   traits: LlmProvider, Tool, SessionStore, UiPort...   │
 ├────────────────────────────────────────────────────────┤
-│ DOMAIN (harness-core, puro)                            │
+│ DOMAIN (harnizator-core, puro)                            │
 │   Message, Event, AgentRegistry, SandboxPolicy...      │
 └────────────────────────────────────────────────────────┘
 ```
@@ -31,31 +31,31 @@
 ## Workspace (D6)
 
 ```
-harnessrs/
+harnizator/
 ├── Cargo.toml                # workspace
 ├── crates/
-│   ├── harness-core/         # domínio + use cases + ports. ZERO deps de IO/TUI/HTTP
-│   ├── harness-providers/    # adapter: trait LlmProvider impls + vault
-│   ├── harness-tools/        # adapter: trait Tool impls + execução sandbox
-│   ├── harness-store/        # adapter: SQLite (rusqlite) implementando SessionStore
-│   ├── harness-cli/          # adapter de entrada: UI headless (stdout/scriptável)
-│   ├── harness-tui/          # adapter de entrada: ratatui (telas, widgets, render puro)
-│   └── harness-app/          # binário: wiring, tokio runtime, CLI args (clap), config (figment)
+│   ├── harnizator-core/         # domínio + use cases + ports. ZERO deps de IO/TUI/HTTP
+│   ├── harnizator-providers/    # adapter: trait LlmProvider impls + vault
+│   ├── harnizator-tools/        # adapter: trait Tool impls + execução sandbox
+│   ├── harnizator-store/        # adapter: SQLite (rusqlite) implementando SessionStore
+│   ├── harnizator-cli/          # adapter de entrada: UI headless (stdout/scriptável)
+│   ├── harnizator-tui/          # adapter de entrada: ratatui (telas, widgets, render puro)
+│   └── harnizator-app/          # binário: wiring, tokio runtime, CLI args (clap), config (figment)
 ├── spec/
 └── tests/                    # testes E2E que sobem o binário contra MockProvider
 ```
 
-Princípio-guia: **harness-core não conhece tokio, reqwest, crossterm ou ratatui.** Todo efeito colateral entra por traits injetadas. Isso é o que torna o TDD real: o agent loop inteiro roda em teste unitário com clocks e providers falsos.
+Princípio-guia: **harnizator-core não conhece tokio, reqwest, crossterm ou ratatui.** Todo efeito colateral entra por traits injetadas. Isso é o que torna o TDD real: o agent loop inteiro roda em teste unitário com clocks e providers falsos.
 
 ## Crates em detalhe
 
-### harness-core
+### harnizator-core
 - Tipos: `Message`, `Role`, `ContentBlock` (text/tool_use/tool_result), `TokenUsage`, `ModelAlias`, `SessionId`, `AgentId`.
 - `Event` enum (bus interno): `AssistantDelta`, `ToolCallRequested`, `ToolCallApproved/Denied`, `ToolCallCompleted`, `AgentSpawned`, `AgentFinished`, `AgentInterrupted`, `ContextInjected`, `Error`.
 - `AgentLoop`: máquina de estados pura `turn(state, input) -> (state, Vec<Effect>)`. `Effect` é um enum (`CallLlm`, `RunTool`, `SpawnAgent`, ...) executado por um runtime fora do core (**pattern "effects as data"**).
 - Agent registry: `petgraph::DiGraph<AgentId, Relation>` para hierarquia.
 
-### harness-providers
+### harnizator-providers
 - `trait LlmProvider`: 
   ```rust
   #[async_trait]
@@ -66,20 +66,20 @@ Princípio-guia: **harness-core não conhece tokio, reqwest, crossterm ou ratatu
   }
   ```
 - Roteador `ProviderRouter`: resolve alias `provider/model` → provider + api_key (via vault) + base_url (default ou override).
-- `Vault`: criptografia age, chave do OS keyring ou `HARNESSRS_VAULT_KEY`.
+- `Vault`: criptografia age, chave do OS keyring ou `HARNIZATOR_VAULT_KEY`.
 - `MockProvider`: respostas scriptadas por scenario file — **peça central do TDD** e dos testes E2E.
 
-### harness-tools
+### harnizator-tools
 - `trait Tool`: `name()`, `schema() -> JsonSchema`, `requires_approval(&self, mode) -> Approval`, `execute(args, ctx) -> ToolOutput`.
 - Builtins Wave 2: `read_file`, `write_file`, `edit_file`, `bash`, `glob`, `grep`.
 - `SandboxPolicy` (D8): enum `ReadOnly | WriteOnly | OnlyFlagged(allowlist) | FullAccess`, resolvida por `(tool, args)`.
 
-### harness-tui
+### harnizator-tui
 - Puro de render: componentes recebem `&AppState` e desenham em `Frame`. Toda mutação de estado acontece em reducers testáveis (`fn reduce(state, Event) -> State diff`).
 - Telas (ver 05-tui.md): Chat, ProviderSetup, Grafo, SessionPicker, Help.
 
-### harness-app
-- Binário `harnessrs`. clap: `harnessrs [--session ID] [--model alias] [--sandbox MODE] [--mock scenario]`.
+### harnizator-app
+- Binário `harnizator`. clap: `harnizator [--session ID] [--model alias] [--sandbox MODE] [--mock scenario]`.
 - Wiring: cria bus `broadcast<Event>`, spawns de tasks, loop do crossterm → keymap → intents → core.
 
 ## Fluxo de um turn (async)

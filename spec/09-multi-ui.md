@@ -53,13 +53,13 @@ Regras do contrato:
 
 | UI | Status | Notas |
 |---|---|---|
-| `harness-cli` (headless, stdout scriptável) | Wave 1+ | Primeira prova do desacoplamento; usada em todos os testes de integração |
-| `harness-tui` (ratatui) | Wave 3+ | UI principal |
+| `harnizator-cli` (headless, stdout scriptável) | Wave 1+ | Primeira prova do desacoplamento; usada em todos os testes de integração |
+| `harnizator-tui` (ratatui) | Wave 3+ | UI principal |
 | GUI/web (ex.: egui, Leptos, ou servidor WS + frontend) | backlog | Só pluga no contrato; zero mudança no core |
 
 ## Contract tests (obrigatório por UI)
 
-Existe uma **suite de contrato compartilhada** (`harness-core/tests/ui_contract.rs`, exportada como harness reutilizável): qualquer crate de UI deve rodá-la contra si mesma.
+Existe uma **suite de contrato compartilhada** (`harnizator-core/tests/ui_contract.rs`, exportada como harness reutilizável): qualquer crate de UI deve rodá-la contra si mesma.
 
 ```rust
 // Toda UI deve passar:
@@ -73,13 +73,13 @@ Métrica contínua: **feature parity** — um teste de reflexão garante que cad
 
 ## Anti-regressões de acoplamento (CI)
 
-1. `harness-core` com **zero** deps de tokio/reqwest/ratatui/rusqlite/crossterm (checado por script no `just ci`).
-2. `harness-tui` e `harness-cli` não importam `harness-providers`/`harness-tools`/`harness-store` diretamente — só `harness-core` (wiring fica em `harness-app`).
+1. `harnizator-core` com **zero** deps de tokio/reqwest/ratatui/rusqlite/crossterm (checado por script no `just ci`).
+2. `harnizator-tui` e `harnizator-cli` não importam `harnizator-providers`/`harnizator-tools`/`harnizator-store` diretamente — só `harnizator-core` (wiring fica em `harnizator-app`).
 3. Nenhum `println!`/stdout fora dos adapters de UI.
 4. Teste arquitetural: para qualquer feature nova, deve existir teste headless equivalente — features "só-TUI" são rejeitadas em review.
 
 ## Impacto nas waves
 
-- Wave 1 entrega `harness-cli` junto (era "headless"; agora é adapter formal).
+- Wave 1 entrega `harnizator-cli` junto (era "headless"; agora é adapter formal).
 - Wave 3: TUI implementa a suite de contrato; paridade TUI↔CLI entra no `just ci`.
 - Wave 4 em diante: qualquer Intent novo exige binding no CLI **antes** do binding no TUI (TDD: o teste headless é o "red" mais barato).

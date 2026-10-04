@@ -1,0 +1,17 @@
+---
+source: crates/harnizator-tui/tests/markdown.rs
+expression: text
+---
+Text::from_iter([
+    Line::from(Span::from("fn main() {}").on_dark_gray()),
+    Line::default(),
+    Line::default(),
+    Line::from_iter([
+        Span::from("• "),
+        Span::from("item a"),
+    ]),
+    Line::from_iter([
+        Span::from("• "),
+        Span::from("item b"),
+    ]),
+])

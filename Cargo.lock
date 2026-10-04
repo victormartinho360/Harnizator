@@ -1107,18 +1107,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "harness-app"
+name = "harnizator-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
  "clap",
- "harness-cli",
- "harness-core",
- "harness-providers",
- "harness-store",
- "harness-tools",
- "harness-tui",
+ "harnizator-cli",
+ "harnizator-core",
+ "harnizator-providers",
+ "harnizator-store",
+ "harnizator-tools",
+ "harnizator-tui",
  "predicates",
  "rexpect",
  "tempfile",
@@ -1127,21 +1127,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "harness-cli"
+name = "harnizator-cli"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
- "harness-core",
- "harness-providers",
- "harness-tools",
+ "harnizator-core",
+ "harnizator-providers",
+ "harnizator-tools",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
 ]
 
 [[package]]
-name = "harness-core"
+name = "harnizator-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -1155,14 +1155,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "harness-providers"
+name = "harnizator-providers"
 version = "0.1.0"
 dependencies = [
  "age",
  "async-trait",
  "bytes",
  "futures",
- "harness-core",
+ "harnizator-core",
  "insta",
  "proptest",
  "rand 0.9.5",
@@ -1178,10 +1178,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "harness-store"
+name = "harnizator-store"
 version = "0.1.0"
 dependencies = [
- "harness-core",
+ "harnizator-core",
  "rusqlite",
  "serde_json",
  "tempfile",
@@ -1190,12 +1190,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "harness-tools"
+name = "harnizator-tools"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "glob",
- "harness-core",
+ "harnizator-core",
  "regex",
  "serde",
  "serde_json",
@@ -1205,13 +1205,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "harness-tui"
+name = "harnizator-tui"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "crossterm",
  "futures",
- "harness-core",
+ "harnizator-core",
  "insta",
  "proptest",
  "pulldown-cmark",

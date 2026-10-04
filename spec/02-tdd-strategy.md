@@ -42,7 +42,7 @@
    }
    ```
 2. **Fakes antes de reais**: `MockProvider` (scenario-driven) e `FakeTool` são escritos na Wave 0 e são pré-requisito de todas as waves.
-3. **Reducers puros**: `harness-tui/state/reduce.rs` — 100% coberto por testes de propriedade: `proptest!(qualquer sequência de Event nunca panica e mantém invariantes)`.
+3. **Reducers puros**: `harnizator-tui/state/reduce.rs` — 100% coberto por testes de propriedade: `proptest!(qualquer sequência de Event nunca panica e mantém invariantes)`.
 4. **Sem flakes de tempo**: core recebe `trait Clock`; testes usam `PausedClock` / `tokio::time::pause()`.
 5. **Mutation coverage leve**: `cargo mutants` nos crates core/tools rodado semanalmente (não bloqueia PR).
 6. **CI** (GitHub Actions): `fmt --check`, `clippy -D warnings`, `nextest run`, `cargo doc`, MSRV pinado.
@@ -56,5 +56,5 @@
 ## Critérios de aceite transversais por wave
 - `cargo nextest run` verde
 - nenhum `unwrap()` fora de testes (clippy lint)
-- cobertura dos crates `harness-core` e `harness-tools` ≥ 85% (llvm-cov)
+- cobertura dos crates `harnizator-core` e `harnizator-tools` ≥ 85% (llvm-cov)
 - snapshots revisados (`cargo insta review`)
