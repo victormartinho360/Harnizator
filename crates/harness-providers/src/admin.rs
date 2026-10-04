@@ -52,6 +52,7 @@ impl ProviderAdmin for ProviderAdminService {
                         ProviderKind::Anthropic => "anthropic",
                         ProviderKind::OpenAi => "openai",
                         ProviderKind::OpenAiCompatible => "openai-compatible",
+                        ProviderKind::Nim => "nim",
                     })
                     .unwrap_or("unknown")
                     .to_string();
@@ -115,5 +116,37 @@ impl ProviderAdmin for ProviderAdminService {
             .await
             .map_err(|e| e.to_string())?;
         Ok(format!("{} modelos", models.len()))
+    }
+
+    fn export_template(&self, path: &str) -> Result<(), String> {
+        let cfg = self.config.lock().map_err(|e| e.to_string())?;
+        cfg.export_template(std::path::Path::new(path)).map_err(|e| e.to_string())
+    }
+
+    fn last_model(&self) -> Option<String> {
+        self.config.lock().ok()?.ui.last_model.clone()
+    }
+
+    fn set_last_model(&self, alias: &str) -> Result<(), String> {
+        {
+            let mut cfg = self.config.lock().map_err(|e| e.to_string())?;
+            cfg.ui.last_model = Some(alias.to_string());
+        }
+        self.save()
+    }
+
+    fn resolve(
+        &self,
+        alias: &ModelAlias,
+    ) -> Result<(std::sync::Arc<dyn harness_core::provider_port::LlmProvider>, String), String> {
+        let (cfg, vault) = {
+            let c = self.config.lock().map_err(|e| e.to_string())?.clone();
+            let v = self.vault.lock().map_err(|e| e.to_string())?.clone();
+            (c, v)
+        };
+        let vault = vault.ok_or("vault indisponível (HARNESSRS_VAULT_KEY ausente)")?;
+        let router = ProviderRouter::new(&cfg, &vault).map_err(|e| e.to_string())?;
+        let resolved = router.resolve(alias).map_err(|e| e.to_string())?;
+        Ok((resolved.provider, resolved.model))
     }
 }

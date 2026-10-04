@@ -222,25 +222,54 @@ async fn real_main() -> anyhow::Result<()> {
 
 /// Modo TUI (default quando não há prompt posicional).
 async fn run_tui(cli: &Cli) -> anyhow::Result<()> {
-    let (provider, model): (Arc<dyn LlmProvider>, String) = if let Some(scenario) = &cli.mock {
-        (
+    // Admin de providers (config + vault) — usado para resolver modelos sob demanda.
+    let admin: Arc<dyn harness_core::provider_admin::ProviderAdmin> = {
+        let vault = Vault::open(&dirs_config().join("vault.age")).ok();
+        Arc::new(harness_providers::ProviderAdminService::new(
+            dirs_config().join("config.toml"),
+            vault,
+        ))
+    };
+
+    // provider inicial: mock > --model > último modelo usado > placeholder vazio.
+    // Sem provider inicial, o chat avisa para escolher um modelo (Ctrl+P/Ctrl+5).
+    let initial: Option<(Arc<dyn LlmProvider>, String)> = if let Some(scenario) = &cli.mock {
+        Some((
             Arc::new(MockProvider::from_scenario_file(scenario)?),
             "mock/test-model".to_string(),
-        )
+        ))
     } else {
-        let alias_raw = cli
+        let alias_raw = cli.model.clone().or_else(|| admin.last_model());
+        match alias_raw {
+            Some(raw) => match ModelAlias::parse(&raw)
+                .map_err(|e| e.to_string())
+                .and_then(|alias| {
+                    admin
+                        .resolve(&alias)
+                        .map(|(p, m)| (p, m))
+                        .map_err(|e| format!("{raw}: {e}"))
+                }) {
+                Ok(pair) => Some(pair),
+                Err(e) => {
+                    eprintln!("warn: {e} — inicie e escolha um modelo via Ctrl+P/Ctrl+5");
+                    None
+                }
+            },
+            None => None,
+        }
+    };
+
+    let model_str = match &initial {
+        Some((_, m)) => cli
             .model
             .clone()
-            .context("TUI mode needs --model (or --mock)")?;
-        let alias = ModelAlias::parse(&alias_raw)?;
-        let config_path = dirs_config().join("config.toml");
-        let config_src = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("cannot read {}", config_path.display()))?;
-        let config: ProviderConfig = toml::from_str(&config_src)?;
-        let vault = Vault::open(&dirs_config().join("vault.age"))?;
-        let router = ProviderRouter::new(&config, &vault)?;
-        let resolved = router.resolve(&alias)?;
-        (resolved.provider, resolved.model)
+            .or_else(|| admin.last_model())
+            .unwrap_or_else(|| format!("{m}")),
+        None => String::new(),
+    };
+    let provider: Arc<dyn LlmProvider> = match initial {
+        Some((p, _)) => p,
+        None => Arc::new(harness_providers::MockProvider::empty()),
     };
 
     let tools: Option<Arc<dyn ToolPort>> = if cli.tools {
@@ -257,20 +286,13 @@ async fn run_tui(cli: &Cli) -> anyhow::Result<()> {
     } else {
         open_store().ok().map(|s| Arc::new(s) as _)
     };
-    let admin: Option<Arc<dyn harness_core::provider_admin::ProviderAdmin>> = {
-        let vault = Vault::open(&dirs_config().join("vault.age")).ok();
-        Some(Arc::new(harness_providers::ProviderAdminService::new(
-            dirs_config().join("config.toml"),
-            vault,
-        )))
-    };
     harness_tui::runtime::run(
         provider,
         tools,
-        model,
+        model_str,
         format!("{:?}", cli.sandbox),
         store,
-        admin,
+        Some(admin),
     )
     .await?;
     Ok(())

@@ -4,8 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use harness_core::TokenUsage;
 use harness_core::events::Event;
 use harness_core::tool_port::{ApprovalDecision, ToolCall};
-
-use harness_core::AgentId;
+use harness_core::{AgentId, ModelAlias};
 use harness_core::agents::NodeView;
 
 use crate::ui_msg::UiMsg;
@@ -18,6 +17,7 @@ pub enum Screen {
     Sessions,
     Providers,
     Help,
+    CommandPalette,
 }
 
 /// Qual entidade o input está mirando.
@@ -36,6 +36,8 @@ pub enum InputMode {
         name: String,
         kind: String,
     },
+    /// Command palette (Ctrl+P) — fuzzy search over providers/models + commands.
+    CommandPalette { query: String },
 }
 
 /// Papel visual da mensagem no chat.
@@ -87,6 +89,10 @@ pub enum Action {
     RemoveProvider(String),
     /// Testa conexão (models()) de um provider.
     TestConnection(String),
+    /// Define o modelo ativo (provider/model).
+    SetActiveModel(ModelAlias),
+    /// Exporta template de providers para arquivo TOML.
+    ExportProvidersTemplate(String),
     /// Envia o texto como mensagem do usuário.
     Send(String),
     /// Resolve a aprovação pendente com a decisão dada.
@@ -106,6 +112,8 @@ pub struct AppState {
     pub follow: bool,
     pub scroll: u16,
     pub model: String,
+    /// Modelo ativo selecionado pelo usuário (`provider/model`).
+    pub active_model: Option<ModelAlias>,
     pub sandbox: String,
     pub usage: TokenUsage,
     pub screen: Screen,
@@ -123,6 +131,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(model: &str, sandbox: &str) -> Self {
+        let active_model = ModelAlias::parse(model).ok();
         Self {
             messages: vec![ChatMessage {
                 role: DisplayRole::System,
@@ -135,6 +144,7 @@ impl AppState {
             follow: true,
             scroll: 0,
             model: model.to_string(),
+            active_model,
             sandbox: sandbox.to_string(),
             usage: TokenUsage::default(),
             screen: Screen::Chat,
@@ -271,7 +281,7 @@ impl AppState {
         }
     }
 
-    /// Reducer de teclado → ação para o runtime.
+    /// Processa tecla principal — retorna Action para o runtime executar.
     pub fn handle_key(&mut self, key: KeyEvent) -> Action {
         // modal de aprovação captura tudo
         if self.awaiting_approval.is_some() {
@@ -286,7 +296,7 @@ impl AppState {
                 _ => Action::None,
             };
         }
-        // roteamento global de telas: Tab/Shift+Tab ciclam, F1-F5 saltam direto.
+        // roteamento global de telas: Tab/Shift+Tab ciclam, F1-F6 saltam direto.
         // Ctrl+dígito permanece como fallback (terminais com CSI-u); Ctrl+2 em
         // terminais legacy chega como NUL e também abre o grafo.
         match (key.code, key.modifiers) {
@@ -312,6 +322,20 @@ impl AppState {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Action::Quit,
             (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
                 self.screen = Screen::Graph;
+                return Action::None;
+            }
+            (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+                self.screen = Screen::CommandPalette;
+                self.input_mode = InputMode::CommandPalette { query: String::new() };
+                return Action::None;
+            }
+            (KeyCode::Char(':'), KeyModifiers::NONE | KeyModifiers::SHIFT)
+                if self.screen == Screen::Chat
+                    && self.input_mode == InputMode::Chat
+                    && self.input.is_empty() =>
+            {
+                self.screen = Screen::CommandPalette;
+                self.input_mode = InputMode::CommandPalette { query: String::new() };
                 return Action::None;
             }
             _ => {}
@@ -347,6 +371,9 @@ impl AppState {
         }
         if self.screen == Screen::Providers {
             return self.handle_providers_key(key);
+        }
+        if self.screen == Screen::CommandPalette {
+            return self.handle_command_palette_key(key);
         }
         match (key.code, key.modifiers) {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => Action::Quit,
@@ -402,6 +429,7 @@ impl AppState {
                             base_url,
                         }
                     }
+                    InputMode::CommandPalette { .. } => Action::None,
                 }
             }
             (KeyCode::Esc, _) => {
@@ -425,8 +453,10 @@ impl AppState {
                 Action::None
             }
             (KeyCode::PageDown, _) => {
-                self.follow = false;
                 self.scroll = self.scroll.saturating_sub(10);
+                if self.scroll == 0 {
+                    self.follow = true;
+                }
                 Action::None
             }
             (KeyCode::End, _) => {
@@ -442,62 +472,108 @@ impl AppState {
         }
     }
 
-    fn selected_agent(&self) -> Option<&AgentId> {
-        self.graph_nodes.get(self.graph_selected).map(|n| &n.id)
-    }
-
     fn handle_graph_key(&mut self, key: KeyEvent) -> Action {
+        // Se está em modo input (Message/Inject), deixa o handler geral tratar Esc/Enter/texto
+        if self.input_mode != InputMode::Chat {
+            return match (key.code, key.modifiers) {
+                (KeyCode::Esc, _) => {
+                    self.input_mode = InputMode::Chat;
+                    self.input.clear();
+                    Action::None
+                }
+                (KeyCode::Enter, _) => {
+                    if self.input.is_empty() {
+                        return Action::None;
+                    }
+                    match std::mem::replace(&mut self.input_mode, InputMode::Chat) {
+                        InputMode::Message(id) => {
+                            let text = std::mem::take(&mut self.input);
+                            Action::SendToAgent(id, text)
+                        }
+                        InputMode::Inject(id) => {
+                            let text = std::mem::take(&mut self.input);
+                            Action::InjectContext(id, text)
+                        }
+                        other => {
+                            self.input_mode = other;
+                            Action::None
+                        }
+                    }
+                }
+                (KeyCode::Backspace, _) => {
+                    self.input.pop();
+                    Action::None
+                }
+                (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                    self.input.push(c);
+                    Action::None
+                }
+                _ => Action::None,
+            };
+        }
         let n = self.graph_nodes.len();
         match (key.code, key.modifiers) {
-            (KeyCode::Enter, _) => {
+            (KeyCode::Esc, _) => {
                 self.screen = Screen::Chat;
                 Action::None
             }
-            (KeyCode::Down, _)
-            | (KeyCode::Char('j'), _)
-            | (KeyCode::Right, _)
-            | (KeyCode::Char('l'), _) => {
-                if n > 0 {
-                    self.graph_selected = (self.graph_selected + 1) % n;
-                }
-                Action::None
-            }
-            (KeyCode::Up, _)
-            | (KeyCode::Char('k'), _)
-            | (KeyCode::Left, _)
-            | (KeyCode::Char('h'), _) => {
+            (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
                 if n > 0 {
                     self.graph_selected = (self.graph_selected + n - 1) % n;
                 }
                 Action::None
             }
-            (KeyCode::Char('x'), _) => self
-                .selected_agent()
-                .map(|id| Action::Interrupt(id.clone()))
-                .unwrap_or(Action::None),
-            (KeyCode::Char('m'), _) => match self.selected_agent() {
-                Some(id) => {
-                    self.input_mode = InputMode::Message(id.clone());
-                    self.screen = Screen::Chat;
-                    Action::None
+            (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
+                if n > 0 {
+                    self.graph_selected = (self.graph_selected + 1) % n;
                 }
-                None => Action::None,
-            },
-            (KeyCode::Char('i'), _) => match self.selected_agent() {
-                Some(id) => {
-                    self.input_mode = InputMode::Inject(id.clone());
-                    self.screen = Screen::Chat;
-                    Action::None
-                }
-                None => Action::None,
-            },
-            (KeyCode::Char('r'), _) => Action::None, // retry: runtime trata em wave futura
-            (KeyCode::PageUp, _) => {
-                self.graph_offset.1 = self.graph_offset.1.saturating_add(3);
                 Action::None
             }
-            (KeyCode::PageDown, _) => {
-                self.graph_offset.1 = self.graph_offset.1.saturating_sub(3);
+            (KeyCode::Left, _) => {
+                self.graph_offset.0 = self.graph_offset.0.saturating_sub(2);
+                Action::None
+            }
+            (KeyCode::Right, _) => {
+                self.graph_offset.0 = self.graph_offset.0.saturating_add(2);
+                Action::None
+            }
+            // vim-style: h/l movem seleção (mesmo comportamento de up/down, com wrap)
+            (KeyCode::Char('h'), _) => {
+                if n > 0 {
+                    self.graph_selected = (self.graph_selected + n - 1) % n;
+                }
+                Action::None
+            }
+            (KeyCode::Char('l'), _) => {
+                if n > 0 {
+                    self.graph_selected = (self.graph_selected + 1) % n;
+                }
+                Action::None
+            }
+            (KeyCode::Char('m'), _) => {
+                if let Some(agent) = self.graph_nodes.get(self.graph_selected) {
+                    self.input_mode = InputMode::Message(agent.id.clone());
+                    self.input.clear();
+                    self.screen = Screen::Chat;
+                }
+                Action::None
+            }
+            (KeyCode::Char('i'), _) => {
+                if let Some(agent) = self.graph_nodes.get(self.graph_selected) {
+                    self.input_mode = InputMode::Inject(agent.id.clone());
+                    self.input.clear();
+                    self.screen = Screen::Chat;
+                }
+                Action::None
+            }
+            (KeyCode::Char('x'), _) => {
+                if let Some(agent) = self.graph_nodes.get(self.graph_selected) {
+                    return Action::Interrupt(agent.id.clone());
+                }
+                Action::None
+            }
+            (KeyCode::Enter, _) => {
+                self.screen = Screen::Chat;
                 Action::None
             }
             _ => Action::None,
@@ -506,29 +582,30 @@ impl AppState {
 
     fn handle_sessions_key(&mut self, key: KeyEvent) -> Action {
         let n = self.sessions.len();
-        match key.code {
-            KeyCode::Down | KeyCode::Char('j') => {
-                if n > 0 {
-                    self.sessions_selected = (self.sessions_selected + 1) % n;
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => {
+                self.screen = Screen::Chat;
+                Action::None
+            }
+            (KeyCode::Up, _) => {
+                if n > 0 && self.sessions_selected > 0 {
+                    self.sessions_selected -= 1;
                 }
                 Action::None
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if n > 0 {
-                    self.sessions_selected = (self.sessions_selected + n - 1) % n;
+            (KeyCode::Down, _) => {
+                if n > 0 && self.sessions_selected + 1 < n {
+                    self.sessions_selected += 1;
                 }
                 Action::None
             }
-            KeyCode::Enter => {
-                self.screen = Screen::Chat;
-                self.sessions
-                    .get(self.sessions_selected)
-                    .map(|m| Action::ResumeSession(m.id.clone()))
-                    .unwrap_or(Action::None)
-            }
-            KeyCode::Esc => {
-                self.screen = Screen::Chat;
-                Action::None
+            (KeyCode::Enter, _) => {
+                if let Some(s) = self.sessions.get(self.sessions_selected) {
+                    self.screen = Screen::Chat;
+                    Action::ResumeSession(s.id.clone())
+                } else {
+                    Action::None
+                }
             }
             _ => Action::None,
         }
@@ -596,6 +673,25 @@ impl AppState {
         }
         let n = self.providers.len();
         match (key.code, key.modifiers) {
+            (KeyCode::Enter, _) => self
+                .providers
+                .get(self.providers_selected)
+                .map(|p| {
+                    // Default model per provider (can be overridden by user later)
+                    let default_model = match p.kind.as_str() {
+                        "anthropic" => "claude-sonnet-4-5",
+                        "openai" => "gpt-4o",
+                        "google" => "gemini-2.5-pro",
+                        "nim" => "nemotron-3-ultra",
+                        "openai-compatible" => "default",
+                        _ => "default",
+                    };
+                    match ModelAlias::parse(&format!("{}/{}", p.id, default_model)) {
+                        Ok(alias) => Action::SetActiveModel(alias),
+                        Err(_) => Action::None,
+                    }
+                })
+                .unwrap_or(Action::None),
             (KeyCode::Esc, _) => {
                 self.screen = Screen::Chat;
                 Action::None
@@ -639,6 +735,84 @@ impl AppState {
             _ => Action::None,
         }
     }
+
+    fn handle_command_palette_key(&mut self, key: KeyEvent) -> Action {
+        // Command palette input mode: Enter selects, Esc closes, typing filters
+        if let InputMode::CommandPalette { query } = &mut self.input_mode {
+            let mut query = query.clone(); // borrow checker workaround
+            match (key.code, key.modifiers) {
+                (KeyCode::Esc, _) => {
+                    self.screen = Screen::Chat;
+                    self.input_mode = InputMode::Chat;
+                    Action::None
+                }
+                (KeyCode::Enter, _) => {
+                    // Check if it's a colon command
+                    if let Some(cmd) = query.strip_prefix(':') {
+                        match cmd {
+                            "export" => {
+                                self.screen = Screen::Chat;
+                                self.input_mode = InputMode::Chat;
+                                Action::ExportProvidersTemplate("./providers.template.toml".to_string())
+                            }
+                            "help" => {
+                                self.screen = Screen::Help;
+                                self.input_mode = InputMode::Chat;
+                                Action::None
+                            }
+                            _ => {
+                                // Unknown command, stay in palette
+                                Action::None
+                            }
+                        }
+                    } else {
+                        // Fuzzy match providers and select first match
+                        let filtered: Vec<_> = self.providers.iter()
+                            .filter(|p| {
+                                let haystack = format!("{} {}", p.id, p.kind).to_lowercase();
+                                haystack.contains(&query.to_lowercase())
+                            })
+                            .collect();
+                        if let Some(provider) = filtered.first() {
+                            // Default model per provider
+                            let default_model = match provider.kind.as_str() {
+                                "anthropic" => "claude-sonnet-4-5",
+                                "openai" => "gpt-4o",
+                                "google" => "gemini-2.5-pro",
+                                "nim" => "nemotron-3-ultra",
+                                "openai-compatible" => "default",
+                                _ => "default",
+                            };
+                            let parsed = ModelAlias::parse(&format!("{}/{}", provider.id, default_model));
+                            match parsed {
+                                Ok(alias) => {
+                                    self.screen = Screen::Chat;
+                                    self.input_mode = InputMode::Chat;
+                                    Action::SetActiveModel(alias)
+                                }
+                                Err(_) => Action::None,
+                            }
+                        } else {
+                            Action::None
+                        }
+                    }
+                }
+                (KeyCode::Backspace, _) => {
+                    query.pop();
+                    self.input_mode = InputMode::CommandPalette { query };
+                    Action::None
+                }
+                (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                    query.push(c);
+                    self.input_mode = InputMode::CommandPalette { query };
+                    Action::None
+                }
+                _ => Action::None,
+            }
+        } else {
+            Action::None
+        }
+    }
 }
 
 fn next_screen(s: Screen) -> Screen {
@@ -648,10 +822,13 @@ fn next_screen(s: Screen) -> Screen {
         Screen::Sessions => Screen::Providers,
         Screen::Providers => Screen::Help,
         Screen::Help => Screen::Chat,
+        // CommandPalette não entra no ciclo de Tab — abre via Ctrl+P / ':'
+        Screen::CommandPalette => Screen::Chat,
     }
 }
 
 fn prev_screen(s: Screen) -> Screen {
+    // ciclo principal tem 5 telas (CommandPalette fora) — prev = next^4
     next_screen(next_screen(next_screen(next_screen(s))))
 }
 
@@ -662,6 +839,7 @@ fn screen_for_f(n: u8) -> Option<Screen> {
         3 => Some(Screen::Help),
         4 => Some(Screen::Sessions),
         5 => Some(Screen::Providers),
+        6 => Some(Screen::CommandPalette),
         _ => None,
     }
 }

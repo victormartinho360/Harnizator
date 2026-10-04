@@ -42,6 +42,10 @@ pub fn draw(f: &mut Frame, state: &AppState) {
             draw_providers(f, chunks[1], state);
             draw_input(f, chunks[2], state);
         }
+        Screen::CommandPalette => {
+            draw_command_palette(f, chunks[1], state);
+            draw_input(f, chunks[2], state);
+        }
     }
     if state.screen == Screen::Help {
         draw_help(f, area);
@@ -353,6 +357,7 @@ fn draw_input(f: &mut Frame, area: Rect, state: &AppState) {
             "novo provider: kind (enter = openai-compatible)".to_string()
         }
         InputMode::AddProviderBaseUrl { .. } => "novo provider: base_url".to_string(),
+        InputMode::CommandPalette { .. } => "command palette (fuzzy search + :commands)".to_string(),
     };
     let border_style = if state.generating {
         Style::default().fg(Color::DarkGray)
@@ -407,4 +412,95 @@ fn draw_approval_modal(f: &mut Frame, area: Rect, pending: &crate::state::Pendin
             .border_style(Style::default().fg(Color::Yellow)),
     );
     f.render_widget(modal, rect);
+}
+
+/// Desenha a command palette (Ctrl+P / :) com busca fuzzy de providers/modelos.
+fn draw_command_palette(f: &mut Frame, area: Rect, state: &AppState) {
+    let block = Block::default().borders(Borders::ALL).title(
+        " command palette (Ctrl+P / : · type to filter · Enter select · Esc close) ",
+    );
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    
+    // Get query from input mode
+    let query = if let InputMode::CommandPalette { query } = &state.input_mode {
+        query.as_str()
+    } else {
+        ""
+    };
+    
+    // Filter providers based on query
+    let filtered: Vec<_> = state.providers.iter()
+        .filter(|p| {
+            if query.is_empty() {
+                true
+            } else {
+                let haystack = format!("{} {}", p.id, p.kind).to_lowercase();
+                haystack.contains(&query.to_lowercase())
+            }
+        })
+        .collect();
+    
+    let mut lines: Vec<Line> = Vec::new();
+    
+    // Show query
+    lines.push(Line::from(Span::styled(
+        format!("> {}", query),
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+    
+    // Show filtered providers with default models
+    for (i, p) in filtered.iter().enumerate() {
+        let default_model = match p.kind.as_str() {
+            "anthropic" => "claude-sonnet-4-5",
+            "openai" => "gpt-4o",
+            "google" => "gemini-2.5-pro",
+            "nim" => "nemotron-3-ultra",
+            "openai-compatible" => "default",
+            _ => "default",
+        };
+        let style = if i == 0 {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        };
+        let mark = if p.configured { "●" } else { "○" };
+        lines.push(Line::from(Span::styled(
+            format!(" {} {} ({}/{})", mark, p.kind, p.id, default_model),
+            style,
+        )));
+    }
+    
+    // Show colon commands
+    if query.starts_with(':') {
+        lines.push(Line::from(""));
+        let cmd = &query[1..];
+        let commands = vec![
+            ("export", "exporta template providers.toml (sem chaves)"),
+            ("help", "abre tela de ajuda"),
+        ];
+        for (c, desc) in commands {
+            let style = if c.starts_with(cmd) {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(
+                format!(" :{} — {}", c, desc),
+                style,
+            )));
+        }
+    }
+    
+    // Show status if any
+    if !state.providers_status.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            state.providers_status.clone(),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
+    
+    f.render_widget(Paragraph::new(lines), inner);
 }

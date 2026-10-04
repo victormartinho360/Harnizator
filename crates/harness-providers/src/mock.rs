@@ -56,6 +56,13 @@ pub struct MockProvider {
 }
 
 impl MockProvider {
+    /// Mock vazio (sem respostas) — usado como placeholder quando não há provider resolvido.
+    pub fn empty() -> Self {
+        Self {
+            scenario: Scenario { response: vec![] },
+        }
+    }
+
     /// Carrega um cenário de uma string TOML.
     pub fn from_scenario_str(toml_src: &str) -> Result<Self, ProviderError> {
         let scenario: Scenario =

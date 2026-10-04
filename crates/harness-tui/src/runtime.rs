@@ -112,6 +112,7 @@ pub async fn run(
     let mut terminal = Terminal::new(backend)?;
 
     let mut state = AppState::new(&model, &sandbox);
+    let initial_model = model.clone();
     let (tx, mut rx) = mpsc::unbounded_channel::<UiMsg>();
     let reply_slot: Arc<Mutex<Option<oneshot::Sender<ApprovalDecision>>>> =
         Arc::new(Mutex::new(None));
@@ -372,7 +373,58 @@ pub async fn run(
                             });
                         }
                     }
+                    Action::SetActiveModel(alias) => {
+                        state.model = alias.to_string();
+                        state.providers_status = format!("Modelo ativo: {}", alias);
+                        if let Some(a) = &admin {
+                            if let Err(e) = a.set_last_model(&alias.to_string()) {
+                                state.providers_status = format!("{} (não persistiu: {})", alias, e);
+                            }
+                        }
+                        state.active_model = Some(alias);
+                    }
+                    Action::ExportProvidersTemplate(path) => {
+                        if let Some(a) = &admin {
+                            let msg = match a.export_template(&path) {
+                                Ok(()) => format!("Template exportado para {}", path),
+                                Err(e) => format!("Erro ao exportar: {}", e),
+                            };
+                            state.providers_status = msg;
+                        }
+                    }
                     Action::Send(text) => {
+                        // Resolve o modelo ativo via admin; se não houver, avisa e não envia.
+                        let (provider_now, model_now) = match &state.active_model {
+                            Some(alias) => {
+                                match admin.as_ref().map(|a| a.resolve(alias)) {
+                                    Some(Ok((p, m))) => (p, m),
+                                    _ if alias.to_string() == initial_model => {
+                                        // alias é o provider inicial (mock/placeholder)
+                                        (provider.clone(), model.clone())
+                                    }
+                                    other => {
+                                        let e = match other {
+                                            Some(Err(e)) => e,
+                                            Some(Ok(_)) => unreachable!(),
+                                            None => "sem vault".to_string(),
+                                        };
+                                        state.apply_ui_msg(UiMsg::TurnFinished(Err(format!(
+                                            "falha ao resolver {alias}: {e}. Configure a chave em Providers (Ctrl+5)."
+                                        ))));
+                                        continue;
+                                    }
+                                }
+                            }
+                            None => {
+                                if model.is_empty() {
+                                    state.apply_ui_msg(UiMsg::TurnFinished(Err(
+                                        "nenhum modelo ativo — escolha um provider via Ctrl+P ou Ctrl+5".to_string(),
+                                    )));
+                                    continue;
+                                }
+                                (provider.clone(), model.clone())
+                            }
+                        };
                         state.push_user_message(text.clone());
                         history.push(Message {
                             role: Role::User,
@@ -381,10 +433,10 @@ pub async fn run(
 
                         let tx2 = tx.clone();
                         let slot2 = reply_slot.clone();
-                        let provider2 = provider.clone();
+                        let provider2 = provider_now;
                         let tools2 = root_tools.clone();
                         let history_now = history.clone();
-                        let model_name = model.clone();
+                        let model_name = model_now;
                         let store3 = store.clone();
                         let session3 = session_id.clone();
                         let seq_counters3 = seq_counters.clone();

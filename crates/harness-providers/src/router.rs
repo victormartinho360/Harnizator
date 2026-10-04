@@ -19,6 +19,8 @@ pub enum ProviderKind {
     OpenAi,
     #[serde(rename = "openai-compatible")]
     OpenAiCompatible,
+    #[serde(rename = "nim")]
+    Nim,
 }
 
 impl ProviderKind {
@@ -28,6 +30,7 @@ impl ProviderKind {
             "anthropic" => Some(Self::Anthropic),
             "openai" => Some(Self::OpenAi),
             "openai-compatible" => Some(Self::OpenAiCompatible),
+            "nim" => Some(Self::Nim),
             _ => None,
         }
     }
@@ -52,6 +55,7 @@ impl ProviderEntry {
             "anthropic" => Ok(ProviderKind::Anthropic),
             "openai" => Ok(ProviderKind::OpenAi),
             "google" => Ok(ProviderKind::OpenAiCompatible),
+            "nim" => Ok(ProviderKind::Nim),
             other => Err(RouterError::UnknownKind(other.to_string())),
         }
     }
@@ -62,7 +66,22 @@ impl ProviderEntry {
             ProviderKind::OpenAi | ProviderKind::OpenAiCompatible => {
                 crate::openai::DEFAULT_BASE_URL.to_string()
             }
+            ProviderKind::Nim => "https://integrate.api.nvidia.com/v1".to_string(),
         })
+    }
+}
+
+/// Configurações de UI persistidas no config (`[ui]`).
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
+pub struct UiConfig {
+    /// Último modelo usado (`provider/model`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_model: Option<String>,
+}
+
+impl UiConfig {
+    fn is_empty(&self) -> bool {
+        self.last_model.is_none()
     }
 }
 
@@ -71,6 +90,9 @@ impl ProviderEntry {
 pub struct ProviderConfig {
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderEntry>,
+    /// Configurações de UI (persistidas em `[ui]`).
+    #[serde(default, skip_serializing_if = "UiConfig::is_empty")]
+    pub ui: UiConfig,
 }
 
 impl ProviderConfig {
@@ -100,7 +122,10 @@ impl ProviderConfig {
                 ),
             },
         );
-        Self { providers }
+        Self {
+            providers,
+            ui: UiConfig::default(),
+        }
     }
 
     /// Carrega do disco; se o arquivo não existe, retorna os defaults.
@@ -122,6 +147,20 @@ impl ProviderConfig {
     pub fn save(&self, path: &std::path::Path) -> Result<(), RouterError> {
         let src =
             toml::to_string_pretty(self).map_err(|e| RouterError::UnknownKind(e.to_string()))?;
+        std::fs::write(path, src).map_err(|e| RouterError::UnknownKind(e.to_string()))
+    }
+
+    /// Exporta template de providers (sem chaves, sem `[ui]`), para versionar/compartilhar.
+    pub fn export_template(&self, path: &std::path::Path) -> Result<(), RouterError> {
+        #[derive(serde::Serialize)]
+        struct TemplateConfig {
+            providers: BTreeMap<String, ProviderEntry>,
+        }
+        let template = TemplateConfig {
+            providers: self.providers.clone(),
+        };
+        let src = toml::to_string_pretty(&template)
+            .map_err(|e| RouterError::UnknownKind(e.to_string()))?;
         std::fs::write(path, src).map_err(|e| RouterError::UnknownKind(e.to_string()))
     }
 
@@ -152,6 +191,7 @@ impl ProviderConfig {
                         ProviderKind::Anthropic => "anthropic",
                         ProviderKind::OpenAi => "openai",
                         ProviderKind::OpenAiCompatible => "openai-compatible",
+                        ProviderKind::Nim => "nim",
                     })
                     .unwrap_or("unknown")
                     .to_string();
@@ -215,7 +255,7 @@ impl ProviderRouter {
             .ok_or_else(|| RouterError::MissingKey(name.clone()))?;
         let provider: Arc<dyn LlmProvider> = match kind {
             ProviderKind::Anthropic => Arc::new(AnthropicProvider::new(&name, &base_url, key)?),
-            ProviderKind::OpenAi | ProviderKind::OpenAiCompatible => {
+            ProviderKind::OpenAi | ProviderKind::OpenAiCompatible | ProviderKind::Nim => {
                 Arc::new(OpenAiProvider::new(&name, &base_url, key)?)
             }
         };
@@ -225,9 +265,4 @@ impl ProviderRouter {
             base_url,
         })
     }
-}
-
-#[cfg(test)]
-mod tests_impl {
-    // reexport para testes unitários internos futuros
 }
