@@ -514,7 +514,7 @@ pub async fn run(
                     }
                 }
             }
-            crate::state::Screen::Providers => {
+            crate::state::Screen::Providers | crate::state::Screen::CommandPalette => {
                 if let Some(a) = &admin {
                     state.apply_ui_msg(UiMsg::ProvidersSync(a.views()));
                 }
