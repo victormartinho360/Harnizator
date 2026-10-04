@@ -122,6 +122,13 @@ impl ProviderConfig {
                 ),
             },
         );
+        providers.insert(
+            "nim".to_string(),
+            ProviderEntry {
+                kind: Some(ProviderKind::Nim),
+                base_url: None, // default: https://integrate.api.nvidia.com/v1
+            },
+        );
         Self {
             providers,
             ui: UiConfig::default(),

@@ -17,11 +17,19 @@ fn vault_with(ids: &[&str]) -> Vault {
 }
 
 #[test]
-fn defaults_include_anthropic_openai_google() {
+fn defaults_include_anthropic_openai_google_nim() {
     let cfg = ProviderConfig::default_with_builtins();
     assert!(cfg.providers.contains_key("anthropic"));
     assert!(cfg.providers.contains_key("openai"));
     assert!(cfg.providers.contains_key("google"));
+    assert!(cfg.providers.contains_key("nim"));
+}
+
+#[test]
+fn nim_default_is_nim_kind() {
+    let cfg = ProviderConfig::default_with_builtins();
+    let nim = cfg.providers.get("nim").unwrap();
+    assert_eq!(nim.kind_named("nim").unwrap(), ProviderKind::Nim);
 }
 
 #[test]
