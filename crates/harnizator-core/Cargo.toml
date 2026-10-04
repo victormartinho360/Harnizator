@@ -1,0 +1,22 @@
+[package]
+version.workspace = true
+name = "harnizator-core"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait = "0.1"
+futures.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+proptest = "1"
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

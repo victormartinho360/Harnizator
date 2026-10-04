@@ -1,0 +1,11 @@
+[[response]]
+when_contains = "hello"
+
+[[response.chunk]]
+text = "Hello "
+
+[[response.chunk]]
+text = "world"
+
+[[response.chunk]]
+usage = { input = 7, output = 2 }

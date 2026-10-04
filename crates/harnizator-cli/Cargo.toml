@@ -1,0 +1,21 @@
+[package]
+version.workspace = true
+name = "harnizator-cli"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+harnizator-core = { path = "../harnizator-core" }
+futures.workspace = true
+async-trait = "0.1"
+thiserror.workspace = true
+
+[dev-dependencies]
+harnizator-providers = { path = "../harnizator-providers" }
+harnizator-tools = { path = "../harnizator-tools" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile = "3"

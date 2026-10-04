@@ -1,0 +1,25 @@
+[package]
+version.workspace = true
+name = "harnizator-tui"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+harnizator-core = { path = "../harnizator-core" }
+ratatui = "0.30"
+crossterm = { version = "0.29", features = ["event-stream"] }
+pulldown-cmark = { version = "0.13", default-features = false }
+tokio.workspace = true
+futures.workspace = true
+async-trait = "0.1"
+thiserror.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+proptest = "1"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

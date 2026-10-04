@@ -1,0 +1,10 @@
+---
+source: crates/harnizator-core/tests/domain.rs
+expression: ev
+---
+AssistantDelta {
+    agent: AgentId(
+        "root",
+    ),
+    text: "hello",
+}

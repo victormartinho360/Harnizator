@@ -1,0 +1,11 @@
+[[response]]
+when_contains = "what does secret.txt contain"
+
+[[response.chunk]]
+tool_use = { name = "read_file", args = { path = "secret.txt" } }
+
+[[response]]
+when_contains = "top secret!"
+
+[[response.chunk]]
+text = "The file says: top secret!"
