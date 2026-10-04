@@ -31,7 +31,13 @@ pub async fn send_with_retry(
             401 | 403 => return Err(ProviderError::Auth),
             429 => continue,
             s if (500..600).contains(&s) => continue,
-            s => return Err(ProviderError::Stream(format!("unexpected HTTP status {s}"))),
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                let body: String = body.chars().take(200).collect();
+                return Err(ProviderError::Stream(format!(
+                    "unexpected HTTP status {s}: {body}"
+                )));
+            }
         }
     }
     match last_status.map(|s| s.as_u16()) {

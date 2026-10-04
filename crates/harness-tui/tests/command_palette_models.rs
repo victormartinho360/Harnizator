@@ -101,3 +101,35 @@ fn esc_from_models_goes_back_to_providers_list() {
     assert!(s.palette_models.is_empty());
     assert_eq!(s.screen, Screen::CommandPalette); // volta à lista, não fecha
 }
+
+#[test]
+fn palette_scrolls_to_keep_selection_visible() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut s = providers_state();
+    let _ = s.handle_key(enter());
+    let models: Vec<String> = (0..50).map(|i| format!("model-{i:02}")).collect();
+    s.apply_ui_msg(UiMsg::ModelsSync {
+        provider: "anthropic".into(),
+        result: Ok(models),
+    });
+    // desce além da área visível (terminal 80x12 → poucas linhas de lista)
+    for _ in 0..40 {
+        let _ = s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    }
+    assert_eq!(s.palette_selected, 40);
+    let mut term = Terminal::new(TestBackend::new(80, 12)).unwrap();
+    term.draw(|f| harness_tui::ui::draw(f, &s)).unwrap();
+    let screen = format!("{}", term.backend());
+    assert!(screen.contains("model-40"), "seleção deve estar visível após scroll:\n{screen}");
+
+    // e sobe de volta: primeiro visível de novo
+    for _ in 0..40 {
+        let _ = s.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    }
+    assert_eq!(s.palette_selected, 0);
+    let mut term = Terminal::new(TestBackend::new(80, 12)).unwrap();
+    term.draw(|f| harness_tui::ui::draw(f, &s)).unwrap();
+    let screen = format!("{}", term.backend());
+    assert!(screen.contains("model-00"));
+}

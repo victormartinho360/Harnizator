@@ -449,6 +449,8 @@ fn draw_command_palette(f: &mut Frame, area: Rect, state: &AppState) {
         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(""));
+    // reservadas no topo: prompt (2 linhas) + header de modelos (1) quando aplicável
+    let header_h: u16 = if state.palette_provider.is_some() { 3 } else { 2 };
     
     // Estágio de modelos: provider escolhido → lista modelos reais
     if let Some(provider) = &state.palette_provider {
@@ -510,5 +512,13 @@ fn draw_command_palette(f: &mut Frame, area: Rect, state: &AppState) {
         )));
     }
     
-    f.render_widget(Paragraph::new(lines), inner);
+    // scroll mantém o item selecionado visível na área
+    let visible = inner.height.saturating_sub(header_h) as usize;
+    let item_pos = header_h as usize + state.palette_selected; // linha do selecionado
+    let offset = if item_pos >= visible + header_h as usize {
+        (item_pos - visible - header_h as usize + 1) as u16
+    } else {
+        0
+    };
+    f.render_widget(Paragraph::new(lines).scroll((offset, 0)), inner);
 }
