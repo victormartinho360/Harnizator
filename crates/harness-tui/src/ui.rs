@@ -450,26 +450,34 @@ fn draw_command_palette(f: &mut Frame, area: Rect, state: &AppState) {
     )));
     lines.push(Line::from(""));
     
-    // Show filtered providers with default models
-    for (i, p) in filtered.iter().enumerate() {
-        let default_model = match p.kind.as_str() {
-            "anthropic" => "claude-sonnet-4-5",
-            "openai" => "gpt-4o",
-            "google" => "gemini-2.5-pro",
-            "nim" => "nemotron-3-ultra",
-            "openai-compatible" => "default",
-            _ => "default",
-        };
-        let style = if i == 0 {
-            Style::default().add_modifier(Modifier::REVERSED)
-        } else {
-            Style::default()
-        };
-        let mark = if p.configured { "●" } else { "○" };
+    // Estágio de modelos: provider escolhido → lista modelos reais
+    if let Some(provider) = &state.palette_provider {
         lines.push(Line::from(Span::styled(
-            format!(" {} {} ({}/{})", mark, p.kind, p.id, default_model),
-            style,
+            format!(" modelos de {} (↑↓ navega · Enter seleciona · Esc volta) ", provider),
+            Style::default().fg(Color::Yellow),
         )));
+        for (i, m) in state.palette_models.iter().enumerate() {
+            let style = if i == state.palette_selected {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(format!("   {}", m), style)));
+        }
+    } else {
+        // Show filtered providers (sem modelo: Enter busca a lista real)
+        for (i, p) in filtered.iter().enumerate() {
+            let style = if i == state.palette_selected {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            let mark = if p.configured { "●" } else { "○" };
+            lines.push(Line::from(Span::styled(
+                format!(" {} {} ({})", mark, p.kind, p.id),
+                style,
+            )));
+        }
     }
     
     // Show colon commands

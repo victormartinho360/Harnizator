@@ -93,6 +93,8 @@ pub enum Action {
     SetActiveModel(ModelAlias),
     /// Exporta template de providers para arquivo TOML.
     ExportProvidersTemplate(String),
+    /// Busca os modelos de um provider (chamada async `models()`).
+    ListModels(String),
     /// Envia o texto como mensagem do usuário.
     Send(String),
     /// Resolve a aprovação pendente com a decisão dada.
@@ -127,6 +129,12 @@ pub struct AppState {
     pub providers_selected: usize,
     /// Status da tela Providers (resultado de teste de conexão etc).
     pub providers_status: String,
+    /// Provider selecionado no palette (estágio de modelos).
+    pub palette_provider: Option<String>,
+    /// Modelos retornados pelo provider no palette.
+    pub palette_models: Vec<String>,
+    /// Índice selecionado na lista atual do palette.
+    pub palette_selected: usize,
 }
 
 impl AppState {
@@ -157,6 +165,9 @@ impl AppState {
             providers: Vec::new(),
             providers_selected: 0,
             providers_status: String::new(),
+            palette_provider: None,
+            palette_models: Vec::new(),
+            palette_selected: 0,
         }
     }
 
@@ -250,6 +261,17 @@ impl AppState {
                     Err(e) => format!("{id}: {e}"),
                 };
             }
+            UiMsg::ModelsSync { provider, result } => match result {
+                Ok(models) => {
+                    self.palette_provider = Some(provider);
+                    self.palette_models = models;
+                    self.palette_selected = 0;
+                    self.providers_status.clear();
+                }
+                Err(e) => {
+                    self.providers_status = format!("{provider}: {e}");
+                }
+            },
             UiMsg::SessionsSync(sessions) => {
                 if !sessions.is_empty() && self.sessions_selected >= sessions.len() {
                     self.sessions_selected = sessions.len() - 1;
@@ -327,6 +349,9 @@ impl AppState {
             (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
                 self.screen = Screen::CommandPalette;
                 self.input_mode = InputMode::CommandPalette { query: String::new() };
+                self.palette_provider = None;
+                self.palette_models.clear();
+                self.palette_selected = 0;
                 return Action::None;
             }
             (KeyCode::Char(':'), KeyModifiers::NONE | KeyModifiers::SHIFT)
@@ -336,6 +361,9 @@ impl AppState {
             {
                 self.screen = Screen::CommandPalette;
                 self.input_mode = InputMode::CommandPalette { query: String::new() };
+                self.palette_provider = None;
+                self.palette_models.clear();
+                self.palette_selected = 0;
                 return Action::None;
             }
             _ => {}
@@ -676,21 +704,7 @@ impl AppState {
             (KeyCode::Enter, _) => self
                 .providers
                 .get(self.providers_selected)
-                .map(|p| {
-                    // Default model per provider (can be overridden by user later)
-                    let default_model = match p.kind.as_str() {
-                        "anthropic" => "claude-sonnet-4-5",
-                        "openai" => "gpt-4o",
-                        "google" => "gemini-2.5-pro",
-                        "nim" => "nemotron-3-ultra",
-                        "openai-compatible" => "default",
-                        _ => "default",
-                    };
-                    match ModelAlias::parse(&format!("{}/{}", p.id, default_model)) {
-                        Ok(alias) => Action::SetActiveModel(alias),
-                        Err(_) => Action::None,
-                    }
-                })
+                .map(|p| Action::ListModels(p.id.clone()))
                 .unwrap_or(Action::None),
             (KeyCode::Esc, _) => {
                 self.screen = Screen::Chat;
@@ -736,15 +750,41 @@ impl AppState {
         }
     }
 
+    /// Tamanho da lista ativa do palette (modelos ou providers filtrados).
+    fn palette_list_len(&self) -> usize {
+        if self.palette_provider.is_some() {
+            self.palette_models.len()
+        } else {
+            let query = match &self.input_mode {
+                InputMode::CommandPalette { query } => query.as_str(),
+                _ => "",
+            };
+            self.providers
+                .iter()
+                .filter(|p| {
+                    let haystack = format!("{} {}", p.id, p.kind).to_lowercase();
+                    query.is_empty() || haystack.contains(&query.to_lowercase())
+                })
+                .count()
+        }
+    }
+
     fn handle_command_palette_key(&mut self, key: KeyEvent) -> Action {
         // Command palette input mode: Enter selects, Esc closes, typing filters
         if let InputMode::CommandPalette { query } = &mut self.input_mode {
             let mut query = query.clone(); // borrow checker workaround
             match (key.code, key.modifiers) {
                 (KeyCode::Esc, _) => {
-                    self.screen = Screen::Chat;
-                    self.input_mode = InputMode::Chat;
-                    Action::None
+                    if self.palette_provider.take().is_some() {
+                        // volta do estágio de modelos para a lista de providers
+                        self.palette_models.clear();
+                        self.palette_selected = 0;
+                        Action::None
+                    } else {
+                        self.screen = Screen::Chat;
+                        self.input_mode = InputMode::Chat;
+                        Action::None
+                    }
                 }
                 (KeyCode::Enter, _) => {
                     // Check if it's a colon command
@@ -760,42 +800,65 @@ impl AppState {
                                 self.input_mode = InputMode::Chat;
                                 Action::None
                             }
-                            _ => {
-                                // Unknown command, stay in palette
-                                Action::None
+                            _ => Action::None,
+                        }
+                    } else if self.palette_provider.is_some() {
+                        // Estágio de modelos: Enter escolhe o modelo selecionado
+                        let Some(model) = self.palette_models.get(self.palette_selected) else {
+                            return Action::None;
+                        };
+                        let Some(provider) = self.palette_provider.clone() else {
+                            return Action::None;
+                        };
+                        let parsed = ModelAlias::parse(&format!("{provider}/{model}"));
+                        match parsed {
+                            Ok(alias) => {
+                                self.screen = Screen::Chat;
+                                self.input_mode = InputMode::Chat;
+                                self.active_model = Some(alias.clone());
+                                self.model = alias.to_string();
+                                Action::SetActiveModel(alias)
                             }
+                            Err(_) => Action::None,
+                        }
+                    } else if query.contains('/') {
+                        // Alias explícito `provider/model` — usa como está
+                        let parsed = ModelAlias::parse(&query);
+                        match parsed {
+                            Ok(alias) => {
+                                self.screen = Screen::Chat;
+                                self.input_mode = InputMode::Chat;
+                                self.active_model = Some(alias.clone());
+                                self.model = alias.to_string();
+                                Action::SetActiveModel(alias)
+                            }
+                            Err(_) => Action::None,
                         }
                     } else {
-                        // Fuzzy match providers and select first match
+                        // Estágio de providers: Enter dispara fetch de modelos do primeiro match
                         let filtered: Vec<_> = self.providers.iter()
                             .filter(|p| {
                                 let haystack = format!("{} {}", p.id, p.kind).to_lowercase();
                                 haystack.contains(&query.to_lowercase())
                             })
                             .collect();
-                        if let Some(provider) = filtered.first() {
-                            // Default model per provider
-                            let default_model = match provider.kind.as_str() {
-                                "anthropic" => "claude-sonnet-4-5",
-                                "openai" => "gpt-4o",
-                                "google" => "gemini-2.5-pro",
-                                "nim" => "nemotron-3-ultra",
-                                "openai-compatible" => "default",
-                                _ => "default",
-                            };
-                            let parsed = ModelAlias::parse(&format!("{}/{}", provider.id, default_model));
-                            match parsed {
-                                Ok(alias) => {
-                                    self.screen = Screen::Chat;
-                                    self.input_mode = InputMode::Chat;
-                                    Action::SetActiveModel(alias)
-                                }
-                                Err(_) => Action::None,
-                            }
-                        } else {
-                            Action::None
-                        }
+                        filtered
+                            .get(self.palette_selected % filtered.len().max(1))
+                            .map(|p| Action::ListModels(p.id.clone()))
+                            .unwrap_or(Action::None)
                     }
+                }
+                (KeyCode::Up, _) => {
+                    let n = self.palette_list_len();
+                    list_up(&mut self.palette_selected, n);
+                    Action::None
+                }
+                (KeyCode::Down, _) => {
+                    let n = self.palette_list_len();
+                    if n > 0 {
+                        self.palette_selected = (self.palette_selected + 1) % n;
+                    }
+                    Action::None
                 }
                 (KeyCode::Backspace, _) => {
                     query.pop();
@@ -812,6 +875,12 @@ impl AppState {
         } else {
             Action::None
         }
+    }
+}
+
+fn list_up(sel: &mut usize, n: usize) {
+    if n > 0 {
+        *sel = (*sel + n - 1) % n;
     }
 }
 

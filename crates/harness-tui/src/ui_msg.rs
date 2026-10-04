@@ -32,4 +32,9 @@ pub enum UiMsg {
         id: String,
         result: Result<String, String>,
     },
+    /// Lista de modelos de um provider (para o picker do command palette).
+    ModelsSync {
+        provider: String,
+        result: Result<Vec<String>, String>,
+    },
 }

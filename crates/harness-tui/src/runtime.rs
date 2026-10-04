@@ -359,6 +359,21 @@ pub async fn run(
                             let _ = tx.send(UiMsg::ProvidersSync(list));
                         }
                     }
+                    Action::ListModels(id) => {
+                        state.providers_status = format!("{id}: carregando modelos…");
+                        if let Some(a) = &admin {
+                            let a = a.clone();
+                            let tx2 = tx.clone();
+                            let id2 = id.clone();
+                            tokio::spawn(async move {
+                                let result = a.list_models(&id2).await;
+                                let _ = tx2.send(UiMsg::ModelsSync {
+                                    provider: id2,
+                                    result,
+                                });
+                            });
+                        }
+                    }
                     Action::TestConnection(id) => {
                         if let Some(a) = &admin {
                             let a2 = a.clone();

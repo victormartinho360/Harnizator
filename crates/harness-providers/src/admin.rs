@@ -149,4 +149,11 @@ impl ProviderAdmin for ProviderAdminService {
         let resolved = router.resolve(alias).map_err(|e| e.to_string())?;
         Ok((resolved.provider, resolved.model))
     }
+
+    async fn list_models(&self, id: &str) -> Result<Vec<String>, String> {
+        let alias = ModelAlias::parse(&format!("{id}/probe")).map_err(|e| e.to_string())?;
+        let (provider, _) = self.resolve(&alias)?;
+        let models = provider.models().await.map_err(|e| e.to_string())?;
+        Ok(models.into_iter().map(|m| m.id).collect())
+    }
 }

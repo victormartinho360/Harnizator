@@ -29,4 +29,6 @@ pub trait ProviderAdmin: Send + Sync {
     fn set_last_model(&self, alias: &str) -> Result<(), String>;
     /// Resolve um alias `provider/model` para um provider pronto para uso.
     fn resolve(&self, alias: &ModelAlias) -> Result<(Arc<dyn LlmProvider>, String), String>;
+    /// Lista os modelos disponíveis do provider (chamada real `models()`).
+    async fn list_models(&self, id: &str) -> Result<Vec<String>, String>;
 }

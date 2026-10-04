@@ -79,11 +79,9 @@ fn command_palette_enter_selects_provider_model() {
     s.input_mode = InputMode::CommandPalette { query: "nim".to_string() };
     // Palette should have filtered entries, first one selected
     
-    // Press Enter to select
+    // Press Enter to select → dispara fetch de modelos do provider
     let action = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    
-    // Should produce SetActiveModel for the selected entry
-    assert!(matches!(action, Action::SetActiveModel(_)));
+    assert!(matches!(action, Action::ListModels(_)));
 }
 
 #[test]

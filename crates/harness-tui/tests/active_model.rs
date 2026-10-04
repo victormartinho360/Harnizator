@@ -52,49 +52,31 @@ fn set_active_model_via_action_updates_state() {
 }
 
 #[test]
-fn providers_screen_enter_sets_active_model() {
+fn providers_screen_enter_lists_models() {
     let mut s = providers_state_with_model();
     s.providers_selected = 2; // nim
-    
-    // Press Enter on selected provider
+
     let action = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    
-    // Should produce SetActiveModel action with provider/default_model
-    assert!(matches!(action, Action::SetActiveModel(_)));
-    if let Action::SetActiveModel(alias) = action {
-        assert_eq!(alias.provider(), "nim");
-        // Model should default to a known model for that provider
-        assert!(!alias.model().is_empty());
-        assert_eq!(alias.model(), "nemotron-3-ultra");
+    assert!(matches!(action, Action::ListModels(_)));
+    if let Action::ListModels(id) = action {
+        assert_eq!(id, "nim");
     }
 }
 
 #[test]
-fn providers_screen_enter_anthropic_sets_claude() {
+fn providers_screen_enter_anthropic_lists_models() {
     let mut s = providers_state_with_model();
-    s.providers_selected = 0; // anthropic
-    
+    s.providers_selected = 0;
     let action = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    
-    assert!(matches!(action, Action::SetActiveModel(_)));
-    if let Action::SetActiveModel(alias) = action {
-        assert_eq!(alias.provider(), "anthropic");
-        assert_eq!(alias.model(), "claude-sonnet-4-5");
-    }
+    assert_eq!(action, Action::ListModels("anthropic".into()));
 }
 
 #[test]
-fn providers_screen_enter_openai_sets_gpt4o() {
+fn providers_screen_enter_openai_lists_models() {
     let mut s = providers_state_with_model();
-    s.providers_selected = 1; // openai
-    
+    s.providers_selected = 1;
     let action = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    
-    assert!(matches!(action, Action::SetActiveModel(_)));
-    if let Action::SetActiveModel(alias) = action {
-        assert_eq!(alias.provider(), "openai");
-        assert_eq!(alias.model(), "gpt-4o");
-    }
+    assert_eq!(action, Action::ListModels("openai".into()));
 }
 
 #[test]
